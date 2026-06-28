@@ -17,6 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
+  getNaturalDateRange,
+  getRollingDateRange,
+  type TimeGranularity,
+} from '@/lib/time'
+import {
   DASHBOARD_CHART_PREFERENCES_STORAGE_KEY,
   DEFAULT_DASHBOARD_CHART_PREFERENCES,
   DEFAULT_TIME_GRANULARITY,
@@ -24,6 +29,8 @@ import {
   TIME_GRANULARITY_STORAGE_KEY,
   TIME_RANGE_PRESETS,
   TIME_RANGE_BY_GRANULARITY,
+  type TimeRangePreset,
+  type TimeRangePresetKey,
 } from '@/features/dashboard/constants'
 import type {
   ConsumptionDistributionChartType,
@@ -31,7 +38,6 @@ import type {
   DashboardFilters,
   ModelAnalyticsChartTab,
 } from '@/features/dashboard/types'
-import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
 
 function isTimeGranularity(value: unknown): value is TimeGranularity {
   return value === 'hour' || value === 'day' || value === 'week'
@@ -55,8 +61,8 @@ function isModelAnalyticsChartTab(
   return value === 'trend' || value === 'proportion' || value === 'top'
 }
 
-function isTimeRangePresetDays(value: unknown): value is number {
-  return TIME_RANGE_PRESETS.some((preset) => preset.days === value)
+function isTimeRangePresetKey(value: unknown): value is TimeRangePresetKey {
+  return TIME_RANGE_PRESETS.some((preset) => preset.key === value)
 }
 
 export function cleanFilters<T extends Record<string, unknown>>(
@@ -113,9 +119,9 @@ export function getSavedChartPreferences(): DashboardChartPreferences {
       modelAnalyticsChart: isModelAnalyticsChartTab(parsed.modelAnalyticsChart)
         ? parsed.modelAnalyticsChart
         : fallbackPreferences.modelAnalyticsChart,
-      defaultTimeRangeDays: isTimeRangePresetDays(parsed.defaultTimeRangeDays)
+      defaultTimeRangeDays: isTimeRangePresetKey(parsed.defaultTimeRangeDays)
         ? parsed.defaultTimeRangeDays
-        : fallbackPreferences.defaultTimeRangeDays,
+        : (fallbackPreferences.defaultTimeRangeDays as TimeRangePresetKey),
       defaultTimeGranularity: isTimeGranularity(parsed.defaultTimeGranularity)
         ? parsed.defaultTimeGranularity
         : fallbackPreferences.defaultTimeGranularity,
@@ -135,15 +141,58 @@ export function saveChartPreferences(
   )
 }
 
-export function getDefaultDays(granularity?: TimeGranularity): number {
+export function getDefaultDays(granularity?: TimeGranularity): TimeRangePresetKey {
   if (!granularity) return getSavedChartPreferences().defaultTimeRangeDays
   return TIME_RANGE_BY_GRANULARITY[getSavedGranularity(granularity)]
+}
+
+// Helper for callers that still need a numeric day count, e.g. to
+// feed computeTimeRange. Returns the rolling-day value of the preset
+// (or a sensible fallback for natural ranges so a missing custom range
+// still produces a finite window).
+export function getPresetRollingDays(key: TimeRangePresetKey): number {
+  const preset = getPresetByKey(key)
+  if (preset.kind === 'rolling') return preset.days
+  // For natural calendar ranges, fall back to a rolling window that
+  // roughly matches the period so the legacy helper has a finite
+  // default if no custom start/end is supplied.
+  switch (preset.range) {
+    case 'thisMonth':
+    case 'lastMonth':
+      return 30
+    case 'thisYear':
+      return 365
+    default:
+      // lastYear or any future natural range without an explicit case.
+      return 365
+  }
+}
+
+export function getPresetByKey(key: TimeRangePresetKey): TimeRangePreset {
+  const preset = TIME_RANGE_PRESETS.find((p) => p.key === key)
+  if (preset) {
+    return preset
+  }
+  // Should not happen if the caller passes a valid key; fall back to
+  // the first preset (always a rolling 1-day window) so we never
+  // return undefined and the UI keeps rendering.
+  return TIME_RANGE_PRESETS[0]
+}
+
+export function getPresetDateRange(
+  key: TimeRangePresetKey
+): { start: Date; end: Date } {
+  const preset = getPresetByKey(key)
+  if (preset.kind === 'natural') {
+    return getNaturalDateRange(preset.range)
+  }
+  return getRollingDateRange(preset.days)
 }
 
 export function buildDefaultDashboardFilters(
   preferences: DashboardChartPreferences = getSavedChartPreferences()
 ): DashboardFilters {
-  const { start, end } = getRollingDateRange(preferences.defaultTimeRangeDays)
+  const { start, end } = getPresetDateRange(preferences.defaultTimeRangeDays)
   return {
     ...EMPTY_DASHBOARD_FILTERS,
     start_timestamp: start,

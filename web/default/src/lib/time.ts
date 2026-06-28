@@ -201,3 +201,46 @@ export function addTimeToDate(
 
   return result
 }
+
+// ============================================================================
+// Natural date range helpers
+// ============================================================================
+
+/**
+ * Named natural periods that always align to a calendar boundary
+ * (start-of-day, start-of-month, start-of-year) in the user's local
+ * timezone. Use these to offer "Yesterday / This Month / This Year"
+ * style presets whose boundaries do not roll forward as the clock
+ * advances.
+ */
+export type NaturalRangeKind =
+  | 'thisMonth'
+  | 'lastMonth'
+  | 'thisYear'
+  | 'lastYear'
+
+/**
+ * Return the calendar-aligned start/end Dates for a natural range.
+ * The returned range covers the full period, from 00:00:00.000 of
+ * the first day to 23:59:59.999 of the last day.
+ */
+export function getNaturalDateRange(
+  kind: NaturalRangeKind,
+  fromDate: Date = new Date()
+): { start: Date; end: Date } {
+  const d = dayjs(fromDate)
+  switch (kind) {
+    case 'thisMonth':
+      return { start: d.startOf('month').toDate(), end: d.endOf('month').toDate() }
+    case 'lastMonth': {
+      const last = d.subtract(1, 'month')
+      return { start: last.startOf('month').toDate(), end: last.endOf('month').toDate() }
+    }
+    case 'thisYear':
+      return { start: d.startOf('year').toDate(), end: d.endOf('year').toDate() }
+    case 'lastYear': {
+      const last = d.subtract(1, 'year')
+      return { start: last.startOf('year').toDate(), end: last.endOf('year').toDate() }
+    }
+  }
+}

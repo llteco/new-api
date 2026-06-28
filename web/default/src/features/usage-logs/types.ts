@@ -289,6 +289,8 @@ export interface GetLogsParams {
   group?: string
   request_id?: string
   upstream_request_id?: string
+  sort_field?: string
+  sort_order?: string
 }
 
 export interface GetLogsResponse {
@@ -361,6 +363,8 @@ export interface FetchLogsConfig {
   pageSize: number
   searchParams: Record<string, unknown>
   columnFilters: Array<{ id: string; value: unknown }>
+  sortField?: string
+  sortOrder?: string
 }
 
 // ============================================================================

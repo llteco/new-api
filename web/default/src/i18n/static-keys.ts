@@ -530,6 +530,33 @@ export const STATIC_I18N_KEYS = [
   'The model that was requested',
   'The upstream channel that served the requests',
 
+  // Dashboard token stats (constant-driven labels)
+  'Token Stats',
+  'Token Stats by User',
+  'Token Stats by Model',
+  'Token Distribution',
+  'Token Distribution Trend',
+  'Top Token Consumers',
+
+  // Usage logs natural date presets (constant-driven labels)
+  'Yesterday',
+  'This Year',
+  'Last Year',
+  'Last Month',
+
+  // Usage logs CSV export (constant-driven labels and toast messages)
+  'Export',
+  'Export to CSV',
+  'Exporting...',
+  'Export failed',
+  'No data to export',
+  'Exported {{count}} rows',
+
+  // Usage logs server-side sort toggle
+  'Sort entire dataset',
+  'Server-side sorting is enabled. Column clicks sort the entire dataset across all pages.',
+  'Client-side sorting only reorders rows on the current page. Enable to sort across the entire dataset.',
+
   // Misc
   'Cancel',
   'Status',

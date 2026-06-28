@@ -64,11 +64,13 @@ func GetUserQuotaDates(c *gin.Context) {
 	userId := c.GetInt("id")
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	// 判断时间跨度是否超过 1 个月
-	if endTimestamp-startTimestamp > 2592000 {
+	// Allow up to 1 year so natural month / year presets work on the
+	// self-service dashboard. Anything longer can still be requested
+	// via the admin endpoint.
+	if endTimestamp-startTimestamp > 31536000 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "时间跨度不能超过 1 个月",
+			"message": "时间跨度不能超过 1 年",
 		})
 		return
 	}
@@ -110,10 +112,10 @@ func GetUserFlowQuotaDates(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if endTimestamp-startTimestamp > 2592000 {
+	if endTimestamp-startTimestamp > 31536000 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "时间跨度不能超过 1 个月",
+			"message": "时间跨度不能超过 1 年",
 		})
 		return
 	}
