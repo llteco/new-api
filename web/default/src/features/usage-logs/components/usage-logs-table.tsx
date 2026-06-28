@@ -18,20 +18,19 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import { type ColumnDef } from '@tanstack/react-table'
+import { type ColumnDef, type SortingState } from '@tanstack/react-table'
+import { useMemo, useState } from 'react'
+import { useMediaQuery } from '@/hooks'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
+import { cn } from '@/lib/utils'
+import { useIsAdmin } from '@/hooks/use-admin'
+import { useTableUrlState } from '@/hooks/use-table-url-state'
 import {
   DataTablePage,
   DataTableRow,
   useDataTable,
 } from '@/components/data-table'
-import { useMediaQuery } from '@/hooks'
-import { useIsAdmin } from '@/hooks/use-admin'
-import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { cn } from '@/lib/utils'
-
 import {
   DEFAULT_LOGS_DATA,
   LOG_TYPE_ALL_VALUE,
@@ -44,6 +43,7 @@ import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
+import { ServerSortToggle } from './server-sort-toggle'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
@@ -77,6 +77,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const isAdmin = useIsAdmin()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
+  const serverSort = searchParams.serverSort ?? false
+  const [sorting, setSorting] = useState<SortingState>([])
 
   const {
     columnFilters,
@@ -116,6 +118,19 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
+  // Extract sort field/order from the TanStack Table sorting state so
+  // the server query honours the column the user clicked.
+  const { sortField, sortOrder } = useMemo(() => {
+    if (!serverSort || sorting.length === 0) {
+      return { sortField: undefined, sortOrder: undefined }
+    }
+    const first = sorting[0]
+    return {
+      sortField: first.id,
+      sortOrder: first.desc ? 'desc' : 'asc',
+    }
+  }, [serverSort, sorting])
+
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
       'logs',
@@ -125,6 +140,9 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       pagination.pageSize,
       columnFilters,
       searchParams,
+      serverSort,
+      sortField,
+      sortOrder,
       t,
     ],
     queryFn: async () => {
@@ -135,6 +153,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         pageSize: pagination.pageSize,
         searchParams,
         columnFilters,
+        sortField,
+        sortOrder,
       })
 
       if (!result?.success) {
@@ -170,6 +190,9 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     onColumnFiltersChange,
     manualPagination: true,
     manualFiltering: true,
+    manualSorting: serverSort,
+    sorting,
+    onSortingChange: setSorting,
     totalCount: data?.total || 0,
     ensurePageInRange,
   })
@@ -204,6 +227,13 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         ) : (
           <TaskLogsFilterBar table={table} logCategory={logCategory} />
         )
+      }
+      afterTable={
+        isCommon ? (
+          <div className='flex items-center px-1 py-1.5'>
+            <ServerSortToggle checked={serverSort} />
+          </div>
+        ) : null
       }
       renderRow={(row) => {
         const logType = (row.original as Record<string, unknown>).type as

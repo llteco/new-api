@@ -26,6 +26,7 @@ import {
   buildQueryParams,
   calculateDashboardStats,
   getDefaultDays,
+  getPresetRollingDays,
 } from '@/features/dashboard/lib'
 import type {
   QuotaDataItem,
@@ -83,7 +84,7 @@ export function LogStatCards(props: LogStatCardsProps) {
     onDataUpdate?.([], true)
 
     const timeRange = computeTimeRange(
-      getDefaultDays(filters?.time_granularity),
+      getPresetRollingDays(getDefaultDays(filters?.time_granularity)),
       filters?.start_timestamp,
       filters?.end_timestamp
     )

@@ -16,22 +16,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { VChart } from '@visactor/react-vchart'
 import { Users, Loader2 } from 'lucide-react'
-import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-
+import type { TimeGranularity } from '@/lib/time'
+import { VCHART_OPTION } from '@/lib/vchart'
+import { useTheme } from '@/context/theme-provider'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useTheme } from '@/context/theme-provider'
 import { getUserQuotaDataByUsers } from '@/features/dashboard/api'
 import {
   TIME_GRANULARITY_OPTIONS,
   TIME_RANGE_PRESETS,
+  type TimeRangePresetKey,
 } from '@/features/dashboard/constants'
 import {
   getDefaultDays,
+  getPresetByKey,
+  getPresetDateRange,
   saveGranularity,
   processUserChartData,
 } from '@/features/dashboard/lib'
@@ -39,8 +43,6 @@ import type {
   ProcessedUserChartData,
   UserChartsFilters,
 } from '@/features/dashboard/types'
-import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
-import { VCHART_OPTION } from '@/lib/vchart'
 
 let themeManagerPromise: Promise<
   (typeof import('@visactor/vchart'))['ThemeManager']
@@ -86,7 +88,7 @@ export function UserCharts(props: UserChartsProps) {
   const onFiltersChange = props.onFiltersChange
 
   const timeRange = useMemo(() => {
-    const { start, end } = getRollingDateRange(selectedRange)
+    const { start, end } = getPresetDateRange(selectedRange)
     return {
       start_timestamp: Math.floor(start.getTime() / 1000),
       end_timestamp: Math.floor(end.getTime() / 1000),
@@ -94,8 +96,8 @@ export function UserCharts(props: UserChartsProps) {
   }, [selectedRange])
 
   const handleRangeChange = useCallback(
-    (days: number) => {
-      onFiltersChange({ ...props.filters, selectedRange: days })
+    (key: TimeRangePresetKey) => {
+      onFiltersChange({ ...props.filters, selectedRange: key })
     },
     [onFiltersChange, props.filters]
   )
@@ -157,15 +159,18 @@ export function UserCharts(props: UserChartsProps) {
     <div className='space-y-3'>
       <div className='flex items-center gap-1.5 overflow-x-auto pb-1 sm:gap-2'>
         <Tabs
-          value={String(selectedRange)}
-          onValueChange={(value) => handleRangeChange(Number(value))}
+          value={selectedRange}
+          onValueChange={(value) => {
+            const preset = getPresetByKey(value as TimeRangePresetKey)
+            handleRangeChange(preset.key)
+          }}
           className='shrink-0'
         >
           <TabsList>
             {TIME_RANGE_PRESETS.map((preset) => (
               <TabsTrigger
-                key={preset.days}
-                value={String(preset.days)}
+                key={preset.key}
+                value={preset.key}
                 className='px-2.5 text-xs'
               >
                 {t(preset.label)}

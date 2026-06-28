@@ -107,6 +107,52 @@ func clickHouseLogOrder(prefix string) string {
 	return prefix + "created_at desc, " + prefix + "request_id desc"
 }
 
+// logSortableColumns maps client-side column identifiers to the
+// physical database column used in the ORDER BY clause. The map is
+// the single source of truth for server-side sorting so arbitrary
+// user input can never reach the SQL string.
+var logSortableColumns = map[string]string{
+	"created_at":       "created_at",
+	"prompt_tokens":    "prompt_tokens",
+	"completion_tokens": "completion_tokens",
+	"quota":            "quota",
+	"use_time":         "use_time",
+	"model_name":       "model_name",
+	"username":         "username",
+	"token_name":       "token_name",
+	"channel_id":       "channel_id",
+}
+
+// resolveLogSortOrder returns a safe ORDER BY clause for the logs
+// query. sortField is the client column identifier (validated against
+// logSortableColumns); sortOrder is "asc" or "desc". Empty or invalid
+// values fall back to the default ordering.
+func resolveLogSortOrder(sortField string, sortOrder string) string {
+	column, ok := logSortableColumns[sortField]
+	if !ok || column == "" {
+		return ""
+	}
+	order := "desc"
+	if sortOrder == "asc" {
+		order = "asc"
+	}
+	return column + " " + order
+}
+
+// resolveLogOrderWithFallback builds the full ORDER BY clause for the
+// logs query. When sortField resolves to a valid column, it is used
+// with the appropriate column prefix and the secondary sort key so
+// pagination stays stable. Otherwise the default ordering applies.
+func resolveLogOrderWithFallback(sortField string, sortOrder string, prefix string) string {
+	if custom := resolveLogSortOrder(sortField, sortOrder); custom != "" {
+		return prefix + custom + ", " + prefix + "id desc"
+	}
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return clickHouseLogOrder(prefix)
+	}
+	return prefix + "created_at desc, " + prefix + "id desc"
+}
+
 func assignDisplayLogIds(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].Id = startIdx + i + 1
@@ -465,7 +511,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, sortField string, sortOrder string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -504,10 +550,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if err != nil {
 		return nil, 0, err
 	}
-	order := "logs.created_at desc, logs.id desc"
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		order = clickHouseLogOrder("logs.")
-	}
+	order := resolveLogOrderWithFallback(sortField, sortOrder, "logs.")
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		return nil, 0, err
@@ -561,7 +604,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 
 const logSearchCountLimit = 10000
 
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string, sortField string, sortOrder string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB.Where("logs.user_id = ?", userId)
@@ -595,10 +638,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		common.SysError("failed to count user logs: " + err.Error())
 		return nil, 0, errors.New("查询日志失败")
 	}
-	order := "logs.id desc"
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		order = clickHouseLogOrder("logs.")
-	}
+	order := resolveLogOrderWithFallback(sortField, sortOrder, "logs.")
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		common.SysError("failed to search user logs: " + err.Error())

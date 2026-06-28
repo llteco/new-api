@@ -93,15 +93,15 @@ export function ModelsChartPreferences(props: ModelsChartPreferencesProps) {
         <Select
           items={[
             ...TIME_RANGE_PRESETS.map((option) => ({
-              value: String(option.days),
+              value: option.key,
               label: t(option.label),
             })),
           ]}
-          value={String(draft.defaultTimeRangeDays)}
+          value={draft.defaultTimeRangeDays}
           onValueChange={(value) =>
             setDraft((prev) => ({
               ...prev,
-              defaultTimeRangeDays: Number(value),
+              defaultTimeRangeDays: value as DashboardChartPreferences['defaultTimeRangeDays'],
             }))
           }
         >
@@ -111,7 +111,7 @@ export function ModelsChartPreferences(props: ModelsChartPreferencesProps) {
           <SelectContent alignItemWithTrigger={false}>
             <SelectGroup>
               {TIME_RANGE_PRESETS.map((option) => (
-                <SelectItem key={option.days} value={String(option.days)}>
+                <SelectItem key={option.key} value={option.key}>
                   {t(option.label)}
                 </SelectItem>
               ))}

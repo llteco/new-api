@@ -16,6 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type {
+  NaturalRangeKind,
+  TimeGranularity,
+} from '@/lib/time'
 import type { DashboardChartPreferences, DashboardFilters } from './types'
 
 export const TIME_GRANULARITY_STORAGE_KEY = 'data_export_default_time'
@@ -27,15 +31,16 @@ export const MAX_CHART_TREND_POINTS = 7
 export const DEFAULT_DASHBOARD_CHART_PREFERENCES: DashboardChartPreferences = {
   consumptionDistributionChart: 'bar',
   modelAnalyticsChart: 'trend',
-  defaultTimeRangeDays: 1,
+  defaultTimeRangeDays: '1d',
   defaultTimeGranularity: DEFAULT_TIME_GRANULARITY,
 }
 
-export const TIME_RANGE_BY_GRANULARITY = {
-  hour: 1,
-  day: 7,
-  week: 30,
-} as const
+export const TIME_RANGE_BY_GRANULARITY: Record<TimeGranularity, TimeRangePresetKey> =
+  {
+    hour: '1d',
+    day: '7d',
+    week: '29d',
+  } as const
 
 export const TIME_GRANULARITY_OPTIONS = [
   { label: 'Hour', value: 'hour' },
@@ -43,11 +48,47 @@ export const TIME_GRANULARITY_OPTIONS = [
   { label: 'Week', value: 'week' },
 ] as const
 
-export const TIME_RANGE_PRESETS = [
-  { label: '1 Day', days: 1 },
-  { label: '7 Days', days: 7 },
-  { label: '14 Days', days: 14 },
-  { label: '29 Days', days: 29 },
+// Range presets that the user can pick on the dashboard charts. The
+// kind field discriminates between rolling windows (anchored to now)
+// and natural calendar periods (anchored to month/year boundaries).
+// The `key` field is the stable identifier stored in user
+// preferences; it is independent of the human-readable label so
+// translations can change without breaking saved state.
+export type TimeRangePresetKey =
+  | '1d'
+  | '7d'
+  | '14d'
+  | '29d'
+  | 'thisMonth'
+  | 'lastMonth'
+  | 'thisYear'
+
+export type TimeRangePresetKind = 'rolling' | 'natural'
+
+export interface RollingTimeRangePreset {
+  kind: 'rolling'
+  key: TimeRangePresetKey
+  label: string
+  days: number
+}
+
+export interface NaturalTimeRangePreset {
+  kind: 'natural'
+  key: TimeRangePresetKey
+  label: string
+  range: NaturalRangeKind
+}
+
+export type TimeRangePreset = RollingTimeRangePreset | NaturalTimeRangePreset
+
+export const TIME_RANGE_PRESETS: readonly TimeRangePreset[] = [
+  { kind: 'rolling', key: '1d', label: '1 Day', days: 1 },
+  { kind: 'rolling', key: '7d', label: '7 Days', days: 7 },
+  { kind: 'rolling', key: '14d', label: '14 Days', days: 14 },
+  { kind: 'rolling', key: '29d', label: '29 Days', days: 29 },
+  { kind: 'natural', key: 'thisMonth', label: 'This Month', range: 'thisMonth' },
+  { kind: 'natural', key: 'lastMonth', label: 'Last Month', range: 'lastMonth' },
+  { kind: 'natural', key: 'thisYear', label: 'This Year', range: 'thisYear' },
 ] as const
 
 export const CONSUMPTION_DISTRIBUTION_CHART_OPTIONS = [
