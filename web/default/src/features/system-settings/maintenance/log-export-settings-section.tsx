@@ -16,11 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as z from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
@@ -50,6 +52,8 @@ import { SettingsSection } from '../components/settings-section'
 import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
+import { startLogAutoExportTask, getSystemTask } from '../api'
+import type { SystemTaskResponse } from '../types'
 
 const logExportSchema = z.object({
   log_export_setting: z.object({
@@ -169,6 +173,62 @@ export function LogExportSettingsSection({
   }
 
   const isEnabled = form.watch('log_export_setting.enabled')
+
+  const [isExporting, setIsExporting] = useState(false)
+  const [exportTask, setExportTask] = useState<SystemTaskResponse | null>(null)
+
+  const exportTaskId = exportTask?.data?.task_id
+  const exportTaskActive =
+    exportTask?.data?.status === 'pending' || exportTask?.data?.status === 'running'
+
+  useEffect(() => {
+    if (!exportTaskId || !exportTaskActive) return
+
+    let cancelled = false
+    const interval = window.setInterval(async () => {
+      try {
+        const res = await getSystemTask(exportTaskId)
+        if (cancelled || !res.success || !res.data) return
+
+        setExportTask(res)
+        if (res.data.status !== 'pending' && res.data.status !== 'running') {
+          if (res.data.status === 'succeeded') {
+            toast.success(t('Log export task completed.'))
+          } else if (res.data.status === 'failed') {
+            toast.error(res.data.error || t('Log export task failed.'))
+          }
+        }
+      } catch {
+        /* keep polling */
+      }
+    }, 1000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [exportTaskActive, exportTaskId, t])
+
+  const handleManualExport = async () => {
+    setIsExporting(true)
+    try {
+      const res = await startLogAutoExportTask()
+      if (!res.success) {
+        throw new Error(res.message || t('Failed to start log export.'))
+      }
+      if (!res.data) {
+        throw new Error(t('Failed to start log export.'))
+      }
+      setExportTask(res)
+      toast.success(t('Log export task started.'))
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : t('Failed to start log export.')
+      toast.error(message)
+    } finally {
+      setIsExporting(false)
+    }
+  }
 
   return (
     <SettingsSection title={t('Log Auto Export')}>
@@ -347,6 +407,24 @@ export function LogExportSettingsSection({
                   </FormItem>
                 )}
               />
+
+              <div className='flex items-center gap-3 pt-2'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  onClick={handleManualExport}
+                  disabled={isExporting || exportTaskActive}
+                >
+                  {isExporting || exportTaskActive
+                    ? t('Exporting...')
+                    : t('Export Now')}
+                </Button>
+                {exportTask?.data?.status === 'failed' && exportTask.data.error && (
+                  <span className='text-destructive text-sm'>
+                    {exportTask.data.error}
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </SettingsForm>
