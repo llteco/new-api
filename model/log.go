@@ -153,6 +153,18 @@ func resolveLogOrderWithFallback(sortField string, sortOrder string, prefix stri
 	return prefix + "created_at desc, " + prefix + "id desc"
 }
 
+func GetLogsForExport(startTimestamp, endTimestamp int64) ([]*Log, error) {
+	var logs []*Log
+	err := LOG_DB.
+		Where("type = ?", LogTypeConsume).
+		Where("created_at >= ? AND created_at < ?", startTimestamp, endTimestamp).
+		Find(&logs).Error
+	if err != nil {
+		return nil, err
+	}
+	return logs, nil
+}
+
 func assignDisplayLogIds(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].Id = startIdx + i + 1
