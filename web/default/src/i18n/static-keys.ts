@@ -537,6 +537,8 @@ export const STATIC_I18N_KEYS = [
   'Token Distribution',
   'Token Distribution Trend',
   'Top Token Consumers',
+  'Cumulative Tokens',
+  'Line Chart',
 
   // Usage logs natural date presets (constant-driven labels)
   'Yesterday',
