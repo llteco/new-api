@@ -359,6 +359,13 @@ export type OperationsSettings = {
   'perf_metrics_setting.flush_interval': number
   'perf_metrics_setting.bucket_time': 'hour' | 'minute' | '5min'
   'perf_metrics_setting.retention_days': number
+  'log_export_setting.enabled': boolean
+  'log_export_setting.interval_minutes': number
+  'log_export_setting.weekday': number
+  'log_export_setting.hour': number
+  'log_export_setting.minute': number
+  'log_export_setting.duration_days': number
+  'log_export_setting.output_dir': string
 }
 
 export type SecuritySettings = {
