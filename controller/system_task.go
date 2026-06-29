@@ -34,6 +34,27 @@ func CreateLogCleanupSystemTask(c *gin.Context) {
 	})
 }
 
+func CreateLogAutoExportSystemTask(c *gin.Context) {
+	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeLogAutoExport, nil)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !created {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"message": "A log auto export task is already running",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    task.ToResponse(),
+	})
+}
+
 func GetCurrentSystemTask(c *gin.Context) {
 	taskType := c.Query("type")
 	if taskType == "" {
