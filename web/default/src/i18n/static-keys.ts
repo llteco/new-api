@@ -560,6 +560,26 @@ export const STATIC_I18N_KEYS = [
   'Server-side sorting is enabled. Column clicks sort the entire dataset across all pages.',
   'Client-side sorting only reorders rows on the current page. Enable to sort across the entire dataset.',
 
+  // Log auto export settings
+  'Log Auto Export',
+  'Enable Auto Export',
+  'Automatically export consumption logs to JSON on a scheduled basis.',
+  'Duration (Days)',
+  'Number of days of logs to export each time.',
+  'Check Interval (Minutes)',
+  'How often to check if the scheduled export is due.',
+  'Output Directory',
+  'Leave empty to use the default log directory. Relative paths are resolved from the working directory.',
+  'e.g., /var/log/new-api/exports',
+  'Save log export settings',
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+
   // Misc
   'Cancel',
   'Status',

@@ -21,6 +21,7 @@ import { EmailSettingsSection } from '../integrations/email-settings-section'
 import { MonitoringSettingsSection } from '../integrations/monitoring-settings-section'
 import { WorkerSettingsSection } from '../integrations/worker-settings-section'
 import { LogSettingsSection } from '../maintenance/log-settings-section'
+import { LogExportSettingsSection } from '../maintenance/log-export-settings-section'
 import { PerformanceSection } from '../maintenance/performance-section'
 import { UpdateCheckerSection } from '../maintenance/update-checker-section'
 import type { OperationsSettings } from '../types'
@@ -98,6 +99,23 @@ const OPERATIONS_SECTIONS = [
     build: (settings: OperationsSettings) => (
       <LogSettingsSection
         defaultEnabled={Boolean(settings.LogConsumeEnabled)}
+      />
+    ),
+  },
+  {
+    id: 'log-export',
+    titleKey: 'Log Auto Export',
+    build: (settings: OperationsSettings) => (
+      <LogExportSettingsSection
+        defaultValues={{
+          'log_export_setting.enabled': settings['log_export_setting.enabled'] ?? true,
+          'log_export_setting.interval_minutes': settings['log_export_setting.interval_minutes'] ?? 60,
+          'log_export_setting.weekday': settings['log_export_setting.weekday'] ?? 5,
+          'log_export_setting.hour': settings['log_export_setting.hour'] ?? 18,
+          'log_export_setting.minute': settings['log_export_setting.minute'] ?? 0,
+          'log_export_setting.duration_days': settings['log_export_setting.duration_days'] ?? 7,
+          'log_export_setting.output_dir': settings['log_export_setting.output_dir'] ?? '',
+        }}
       />
     ),
   },

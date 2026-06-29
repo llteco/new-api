@@ -10,24 +10,28 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
 // logAutoExportHandler runs the scheduled weekly log auto-export job.
-// It exports consumption logs from the past 7 days to a JSON file in the
-// configured log directory. The job triggers every Friday at 18:00.
+// It exports consumption logs to a JSON file in the configured directory.
+// The trigger time, duration, and output directory are all configurable
+// via the admin management panel.
 type logAutoExportHandler struct{}
 
 func (logAutoExportHandler) Type() string { return model.SystemTaskTypeLogAutoExport }
 
 func (logAutoExportHandler) Enabled() bool {
-	if !common.GetEnvOrDefaultBool("LOG_AUTO_EXPORT_ENABLED", true) {
+	setting := operation_setting.GetLogExportSetting()
+	if !setting.Enabled {
 		return false
 	}
 	return isWeeklyLogExportDue()
 }
 
 func (logAutoExportHandler) Interval() time.Duration {
-	return 1 * time.Hour
+	setting := operation_setting.GetLogExportSetting()
+	return time.Duration(setting.IntervalMinutes) * time.Minute
 }
 
 func (logAutoExportHandler) NewPayload() any { return nil }
@@ -40,31 +44,32 @@ func (h logAutoExportHandler) Run(ctx context.Context, task *model.SystemTask, r
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, nil, nil)
 }
 
-// isWeeklyLogExportDue checks whether the current time is past this week's
-// Friday 18:00 and the job has not yet run this week.
+// isWeeklyLogExportDue checks whether the current time is past the configured
+// weekday/hour/minute and the job has not yet run this week.
 func isWeeklyLogExportDue() bool {
+	setting := operation_setting.GetLogExportSetting()
 	now := time.Now()
 
-	// Find this Friday at 18:00
+	// Find the configured day this week at the configured time
 	weekday := now.Weekday()
-	daysUntilFriday := (5 - weekday) % 7
-	if daysUntilFriday < 0 {
-		daysUntilFriday += 7
+	daysUntilTarget := (time.Weekday(setting.Weekday) - weekday) % 7
+	if daysUntilTarget < 0 {
+		daysUntilTarget += 7
 	}
-	thisFriday := time.Date(now.Year(), now.Month(), now.Day(), 18, 0, 0, 0, now.Location())
-	thisFriday = thisFriday.AddDate(0, 0, int(daysUntilFriday))
+	targetTime := time.Date(now.Year(), now.Month(), now.Day(),
+		setting.Hour, setting.Minute, 0, 0, now.Location())
+	targetTime = targetTime.AddDate(0, 0, int(daysUntilTarget))
 
-	if now.Before(thisFriday) {
+	if now.Before(targetTime) {
 		return false
 	}
 
-	// Check if we already ran this week (after this Friday 18:00)
+	// Check if we already ran this week (after the target time)
 	latest, err := model.GetLatestSystemTask(model.SystemTaskTypeLogAutoExport)
 	if err != nil {
-		// If we can't check, default to running to be safe
 		return true
 	}
-	if latest != nil && latest.UpdatedAt >= thisFriday.Unix() {
+	if latest != nil && latest.UpdatedAt >= targetTime.Unix() {
 		return false
 	}
 	return true
@@ -72,8 +77,8 @@ func isWeeklyLogExportDue() bool {
 
 // logAutoExportData matches the requested JSON output structure.
 type logAutoExportData struct {
-	Tokens  int64                              `json:"tokens"`
-	Users   map[string]map[string]int64        `json:"users"`
+	Tokens  int64                                             `json:"tokens"`
+	Users   map[string]map[string]int64                       `json:"users"`
 	Details map[string]map[string]map[string]logHourDetail `json:"details"`
 }
 
@@ -84,8 +89,9 @@ type logHourDetail struct {
 }
 
 func runLogAutoExport(ctx context.Context) error {
+	setting := operation_setting.GetLogExportSetting()
 	endTime := time.Now()
-	startTime := endTime.AddDate(0, 0, -7)
+	startTime := endTime.AddDate(0, 0, -setting.DurationDays)
 
 	logs, err := model.GetLogsForExport(startTime.Unix(), endTime.Unix())
 	if err != nil {
@@ -99,8 +105,11 @@ func runLogAutoExport(ctx context.Context) error {
 		return fmt.Errorf("marshal export data failed: %w", err)
 	}
 
-	logDir := *common.LogDir
+	logDir := setting.OutputDir
 	if logDir == "" {
+		logDir = *common.LogDir
+	}
+	if logDir == "" || logDir == "." {
 		logDir = filepath.Dir(logger.GetCurrentLogPath())
 	}
 	if logDir == "" || logDir == "." {
