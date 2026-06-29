@@ -1,6 +1,4 @@
 {
-  "Cumulative Tokens": "Cumulative Tokens",
-  "Line Chart": "Line Chart",
   "translation": {
     "360": "360",
     "1000": "1000",
@@ -1139,6 +1137,7 @@
     "Creem products must be a JSON array": "Creem products must be a JSON array",
     "Cross-group": "Cross-group",
     "Cross-group retry": "Cross-group retry",
+    "Cumulative Tokens": "Cumulative Tokens",
     "Currency": "Currency",
     "Currency & Display": "Currency & Display",
     "Current Balance": "Current Balance",
@@ -2392,6 +2391,7 @@
     "Limit Reached": "Limit Reached",
     "Limit which models can be used with this key": "Limit which models can be used with this key",
     "Limited": "Limited",
+    "Line Chart": "Line Chart",
     "LingYiWanWu": "LingYiWanWu",
     "Link to your documentation site": "Link to your documentation site",
     "LinuxDO": "LinuxDO",
@@ -4364,6 +4364,7 @@
     "This model has both fixed-price and token-price settings. Saving the current mode will rewrite the conflicting fields.": "This model has both fixed-price and token-price settings. Saving the current mode will rewrite the conflicting fields.",
     "This model is not available in any group, or no group pricing information is configured.": "This model is not available in any group, or no group pricing information is configured.",
     "This month": "This month",
+    "This Month": "This Month",
     "This page has not been created yet.": "This page has not been created yet.",
     "This plan does not allow balance redemption": "This plan does not allow balance redemption",
     "This project must be used in compliance with the": "This project must be used in compliance with the",

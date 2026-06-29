@@ -1,6 +1,4 @@
 {
-  "Cumulative Tokens": "Tổng số Token tích lũy",
-  "Line Chart": "Biểu đồ đường",
   "translation": {
     "360": "360",
     "1000": "1000",
@@ -1139,6 +1137,7 @@
     "Creem products must be a JSON array": "Sản phẩm Creem phải là mảng JSON",
     "Cross-group": "Liên nhóm",
     "Cross-group retry": "Thử lại liên nhóm",
+    "Cumulative Tokens": "Tổng số Token tích lũy",
     "Currency": "Tiền tệ",
     "Currency & Display": "Tiền tệ & hiển thị",
     "Current Balance": "Số Dư Hiện Tại",
@@ -2392,6 +2391,7 @@
     "Limit Reached": "Đã đạt giới hạn",
     "Limit which models can be used with this key": "Giới hạn các mô hình có thể được sử dụng với khóa này",
     "Limited": "Giới hạn",
+    "Line Chart": "Biểu đồ đường",
     "LingYiWanWu": "LingYiWanWu",
     "Link to your documentation site": "Liên kết đến trang web tài liệu của bạn",
     "LinuxDO": "LinuxDO",
@@ -4364,6 +4364,7 @@
     "This model has both fixed-price and token-price settings. Saving the current mode will rewrite the conflicting fields.": "Mô hình này có cả giá cố định và cài đặt giá theo token. Lưu chế độ hiện tại sẽ ghi lại các trường xung đột.",
     "This model is not available in any group, or no group pricing information is configured.": "Mô hình này không khả dụng trong bất kỳ nhóm nào, hoặc thông tin giá nhóm chưa được cấu hình.",
     "This month": "Tháng này",
+    "This Month": "Tháng này",
     "This page has not been created yet.": "Trang này chưa được tạo.",
     "This plan does not allow balance redemption": "Gói này không cho phép thanh toán bằng số dư",
     "This project must be used in compliance with the": "Dự án này phải được sử dụng tuân thủ theo",

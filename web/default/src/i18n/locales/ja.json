@@ -1,6 +1,4 @@
 {
-  "Cumulative Tokens": "累積トークン",
-  "Line Chart": "折れ線グラフ",
   "translation": {
     "360": "360",
     "1000": "1000",
@@ -1139,6 +1137,7 @@
     "Creem products must be a JSON array": "Creem 製品は JSON 配列でなければなりません",
     "Cross-group": "グループ横断",
     "Cross-group retry": "グループ横断リトライ",
+    "Cumulative Tokens": "累積トークン",
     "Currency": "通貨",
     "Currency & Display": "通貨と表示",
     "Current Balance": "現在の残高",
@@ -2392,6 +2391,7 @@
     "Limit Reached": "上限に達しました",
     "Limit which models can be used with this key": "このキーで使用できるモデルを制限する",
     "Limited": "制限",
+    "Line Chart": "折れ線グラフ",
     "LingYiWanWu": "LingYiWanWu",
     "Link to your documentation site": "ドキュメントサイトへのリンク",
     "LinuxDO": "LinuxDO",
@@ -4364,6 +4364,7 @@
     "This model has both fixed-price and token-price settings. Saving the current mode will rewrite the conflicting fields.": "このモデルには固定価格とトークン価格設定の両方があります。現在のモードで保存すると、競合するフィールドが上書きされます。",
     "This model is not available in any group, or no group pricing information is configured.": "このモデルはどのグループでも利用できないか、グループの料金情報が設定されていません。",
     "This month": "今月",
+    "This Month": "今月",
     "This page has not been created yet.": "このページはまだ作成されていません。",
     "This plan does not allow balance redemption": "このプランでは残高での交換は許可されていません",
     "This project must be used in compliance with the": "このプロジェクトは、以下を遵守して使用する必要があります",
