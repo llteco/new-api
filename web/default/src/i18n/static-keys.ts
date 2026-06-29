@@ -542,6 +542,7 @@ export const STATIC_I18N_KEYS = [
 
   // Usage logs natural date presets (constant-driven labels)
   'Yesterday',
+  'This Month',
   'This Year',
   'Last Year',
   'Last Month',

@@ -1,6 +1,4 @@
 {
-  "Cumulative Tokens": "Tokens cumulés",
-  "Line Chart": "Graphique linéaire",
   "translation": {
     "360": "360",
     "1000": "1000",
@@ -1168,6 +1166,7 @@
     "Creem products must be a JSON array": "Les produits Creem doivent être un tableau JSON",
     "Cross-group": "Inter-groupes",
     "Cross-group retry": "Nouvelle tentative inter-groupes",
+    "Cumulative Tokens": "Tokens cumulés",
     "Currency": "Devise",
     "Currency & Display": "Devise et affichage",
     "Current Balance": "Solde actuel",
@@ -2447,6 +2446,7 @@
     "Limit Reached": "Limite atteinte",
     "Limit which models can be used with this key": "Limiter les modèles pouvant être utilisés avec cette clé",
     "Limited": "Limité",
+    "Line Chart": "Graphique linéaire",
     "LingYiWanWu": "LingYiWanWu",
     "Link to your documentation site": "Lien vers votre site de documentation",
     "LinuxDO": "LinuxDO",
@@ -4458,6 +4458,7 @@
     "This model has both fixed-price and token-price settings. Saving the current mode will rewrite the conflicting fields.": "Ce modèle possède à la fois un prix fixe et des prix par token. L’enregistrement du mode actuel réécrira les champs en conflit.",
     "This model is not available in any group, or no group pricing information is configured.": "Ce modèle n'est disponible dans aucun groupe, ou aucune information de tarification de groupe n'est configurée.",
     "This month": "Ce mois-ci",
+    "This Month": "Ce mois-ci",
     "This page has not been created yet.": "Cette page n'a pas encore été créée.",
     "This plan does not allow balance redemption": "Ce forfait ne permet pas le paiement avec le solde",
     "This project must be used in compliance with the": "Ce projet doit être utilisé conformément aux",

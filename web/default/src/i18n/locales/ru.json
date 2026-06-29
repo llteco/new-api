@@ -1,6 +1,4 @@
 {
-  "Cumulative Tokens": "Накопленные токены",
-  "Line Chart": "Линейный график",
   "translation": {
     "360": "360",
     "1000": "1000",
@@ -1168,6 +1166,7 @@
     "Creem products must be a JSON array": "Продукты Creem должны быть JSON-массивом",
     "Cross-group": "Межгрупповой",
     "Cross-group retry": "Повтор между группами",
+    "Cumulative Tokens": "Накопленные токены",
     "Currency": "Валюта",
     "Currency & Display": "Валюта и отображение",
     "Current Balance": "Текущий баланс",
@@ -2447,6 +2446,7 @@
     "Limit Reached": "Достигнут лимит",
     "Limit which models can be used with this key": "Ограничить модели, которые могут быть использованы с этим ключом",
     "Limited": "Ограничено",
+    "Line Chart": "Линейный график",
     "LingYiWanWu": "LingYiWanWu",
     "Link to your documentation site": "Ссылка на ваш сайт документации",
     "LinuxDO": "LinuxDO",
@@ -4458,6 +4458,7 @@
     "This model has both fixed-price and token-price settings. Saving the current mode will rewrite the conflicting fields.": "У этой модели одновременно заданы фиксированная цена и цены за токены. Сохранение текущего режима перезапишет конфликтующие поля.",
     "This model is not available in any group, or no group pricing information is configured.": "Эта модель недоступна ни в одной группе, или информация о ценах для групп не настроена.",
     "This month": "В этом месяце",
+    "This Month": "В этом месяце",
     "This page has not been created yet.": "Эта страница еще не создана.",
     "This plan does not allow balance redemption": "Этот план не разрешает оплату балансом",
     "This project must be used in compliance with the": "Этот проект должен использоваться в соответствии с",

@@ -1,6 +1,4 @@
 {
-  "Cumulative Tokens": "累积 Tokens",
-  "Line Chart": "折线图",
   "translation": {
     "360": "360",
     "1000": "1000",
@@ -1168,6 +1166,7 @@
     "Creem products must be a JSON array": "Creem 产品必须是 JSON 数组",
     "Cross-group": "跨分组",
     "Cross-group retry": "跨分组重试",
+    "Cumulative Tokens": "累积 Tokens",
     "Currency": "货币",
     "Currency & Display": "货币与展示",
     "Current Balance": "当前余额",
@@ -2447,6 +2446,7 @@
     "Limit Reached": "已达上限",
     "Limit which models can be used with this key": "限制此密钥可使用的模型",
     "Limited": "受限",
+    "Line Chart": "折线图",
     "LingYiWanWu": "LingYiWanWu",
     "Link to your documentation site": "您的文档站点链接",
     "LinuxDO": "LinuxDO",
@@ -4458,6 +4458,7 @@
     "This model has both fixed-price and token-price settings. Saving the current mode will rewrite the conflicting fields.": "该模型同时存在固定价格和按 token 价格设置。保存当前模式会重写冲突字段。",
     "This model is not available in any group, or no group pricing information is configured.": "此模型在任何分组中均不可用，或未配置分组定价信息。",
     "This month": "本月获得",
+    "This Month": "本月",
     "This page has not been created yet.": "此页面尚未创建。",
     "This plan does not allow balance redemption": "该套餐不允许使用余额兑换",
     "This project must be used in compliance with the": "此项目的使用必须遵守",
