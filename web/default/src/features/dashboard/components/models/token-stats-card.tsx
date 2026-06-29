@@ -71,6 +71,8 @@ export function TokenStatsCard(props: TokenStatsCardProps) {
   const [granularity, setGranularity] = useState<TokenStatGranularity>('day')
   const [topN, setTopN] = useState<number>(10)
 
+  const [chartType, setChartType] = useState<'line' | 'bar' | 'area'>('line')
+
   const timeRange = useMemo(() => {
     const fallbackDays = props.filters?.time_granularity
       ? getPresetRollingDaysForGranularity(props.filters.time_granularity)
@@ -153,6 +155,20 @@ export function TokenStatsCard(props: TokenStatsCardProps) {
       value: formatStatNumber(totals.completion, locale),
     },
   ]
+
+  const getTrendSpec = () => {
+    if (chartType === 'bar') {
+      const spec = { ...chartData.spec_line }
+      spec.type = 'bar'
+      spec.stack = true
+      delete spec.point
+      return spec
+    }
+    if (chartType === 'area') {
+      return chartData.spec_area
+    }
+    return chartData.spec_line
+  }
 
   return (
     <div className='overflow-hidden rounded-lg border'>
@@ -252,14 +268,34 @@ export function TokenStatsCard(props: TokenStatsCardProps) {
           </div>
         </div>
         <div className='overflow-hidden rounded-lg border'>
+          <div className='flex flex-wrap items-center justify-end gap-2 border-b px-3 py-2 sm:px-5 sm:py-3'>
+            <Tabs
+              value={chartType}
+              onValueChange={(value) =>
+                setChartType(value as 'line' | 'bar' | 'area')
+              }
+            >
+              <TabsList>
+                <TabsTrigger value='bar' className='px-2.5 text-xs'>
+                  {t('Bar Chart')}
+                </TabsTrigger>
+                <TabsTrigger value='line' className='px-2.5 text-xs'>
+                  {t('Line Chart')}
+                </TabsTrigger>
+                <TabsTrigger value='area' className='px-2.5 text-xs'>
+                  {t('Area Chart')}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
           <div className='h-[300px] p-1.5 sm:h-96 sm:p-2'>
             {isLoading || !themeReady ? (
               <Skeleton className='h-full w-full' />
             ) : (
               <VChart
-                key={`token-stats-line-${dimension}-${granularity}-${topN}-${resolvedTheme}`}
+                key={`token-stats-trend-${chartType}-${dimension}-${granularity}-${topN}-${resolvedTheme}`}
                 spec={{
-                  ...chartData.spec_line,
+                  ...getTrendSpec(),
                   theme: resolvedTheme === 'dark' ? 'dark' : 'light',
                   background: 'transparent',
                 }}

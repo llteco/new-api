@@ -30,6 +30,7 @@ type TFunction = (key: string) => string
 export interface ProcessedTokenStatsData {
   spec_bar: Record<string, unknown>
   spec_line: Record<string, unknown>
+  spec_area: Record<string, unknown>
 }
 
 function formatInt(value: number) {
@@ -77,6 +78,20 @@ export function processTokenStats(
     spec_line: {
       type: 'line',
       data: [{ id: 'tokenStatsLine', values: [] }],
+      xField: 'time',
+      yField: 'tokens',
+      seriesField: 'name',
+      title: {
+        visible: true,
+        text: tt('Token Distribution Trend'),
+        subtext: tt('No data available'),
+      },
+      legends: { visible: true, selectMode: 'single' },
+      background: { fill: 'transparent' },
+    } as Record<string, unknown>,
+    spec_area: {
+      type: 'area',
+      data: [{ id: 'tokenStatsArea', values: [] }],
       xField: 'time',
       yField: 'tokens',
       seriesField: 'name',
@@ -195,7 +210,61 @@ export function processTokenStats(
     background: { fill: 'transparent' },
   } as Record<string, unknown>
 
-  return { spec_bar: specBar, spec_line: specLine }
+  const areaValues = buildCumulativeValues(lineValues)
+  const specArea = {
+    type: 'area',
+    data: [{ id: 'tokenStatsArea', values: areaValues }],
+    xField: 'time',
+    yField: 'tokens',
+    seriesField: 'name',
+    stack: false,
+    title: {
+      visible: true,
+      text: tt('Token Distribution Trend'),
+    },
+    axes: [
+      {
+        orient: 'left',
+        title: { visible: true, text: tt('Cumulative Tokens') },
+        label: { formatMethod: (val: number) => formatInt(val) },
+      },
+      { orient: 'bottom', type: 'band' },
+    ],
+    legends: { visible: true, selectMode: 'single' },
+    color: {
+      type: 'ordinal',
+      domain: seriesNames,
+      range: seriesNames.map((name) => nameColorMap[name]),
+    },
+    tooltip: [
+      {
+        title: (datum: { time?: string }) => datum.time ?? '',
+        content: [
+          {
+            key: (datum: { name?: string }) => datum.name ?? '',
+            value: (datum: { tokens?: number }) =>
+              datum.tokens !== undefined ? formatInt(datum.tokens) : '',
+          },
+        ],
+      },
+    ],
+    area: {
+      style: {
+        fillOpacity: 0.15,
+        curveType: 'monotone',
+      },
+    },
+    line: {
+      style: {
+        lineWidth: 2,
+        curveType: 'monotone',
+      },
+    },
+    point: { visible: false },
+    background: { fill: 'transparent' },
+  } as Record<string, unknown>
+
+  return { spec_bar: specBar, spec_line: specLine, spec_area: specArea }
 }
 
 function buildLineValues(
@@ -214,6 +283,27 @@ function buildLineValues(
     }
   }
   return values
+}
+
+function buildCumulativeValues(
+  lineValues: Array<{ time: string; name: string; tokens: number }>
+) {
+  const byName = new Map<string, Array<{ time: string; tokens: number }>>()
+  for (const v of lineValues) {
+    if (!byName.has(v.name)) byName.set(v.name, [])
+    byName.get(v.name)!.push({ time: v.time, tokens: v.tokens })
+  }
+
+  const result: Array<{ time: string; name: string; tokens: number }> = []
+  for (const [name, points] of byName) {
+    points.sort((a, b) => a.time.localeCompare(b.time))
+    let cumulative = 0
+    for (const p of points) {
+      cumulative += p.tokens
+      result.push({ time: p.time, name, tokens: cumulative })
+    }
+  }
+  return result
 }
 
 export function summarizeTokenTotal(items: TokenDimensionStat[]) {
