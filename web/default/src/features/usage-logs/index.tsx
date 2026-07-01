@@ -57,6 +57,7 @@ function UsageLogsContent() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const params = route.useParams()
+  const searchParams = route.useSearch()
   const activeCategory: UsageLogsSectionId =
     params.section && isUsageLogsSectionId(params.section)
       ? params.section
@@ -105,6 +106,22 @@ function UsageLogsContent() {
     [navigate]
   )
 
+  const handleFilterByUser = useCallback(
+    (username: string) => {
+      setUserInfoDialogOpen(false)
+      void navigate({
+        to: '/usage-logs/$section',
+        params: { section: activeCategory },
+        search: {
+          ...searchParams,
+          username,
+          page: 1,
+        },
+      })
+    },
+    [activeCategory, navigate, searchParams, setUserInfoDialogOpen]
+  )
+
   const pageMeta =
     activeCategory === 'common' ? SECTION_META.common : SECTION_META.task
   const showTaskSwitcher =
@@ -140,6 +157,7 @@ function UsageLogsContent() {
         userId={selectedUserId}
         open={userInfoDialogOpen}
         onOpenChange={setUserInfoDialogOpen}
+        onFilterByUser={handleFilterByUser}
       />
 
       <CacheStatsDialog

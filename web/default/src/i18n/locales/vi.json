@@ -3051,6 +3051,7 @@
     "Only successful requests": "Chỉ các yêu cầu thành công",
     "Only successful requests count toward this limit.": "Chỉ những yêu cầu thành công mới được tính vào giới hạn này.",
     "Only the last {{value}} log files will be retained; the rest will be deleted.": "Chỉ giữ lại {{value}} tệp nhật ký gần nhất; phần còn lại sẽ bị xóa.",
+    "Only this user": "Chỉ ngườii dùng này",
     "Oops! Page Not Found!": "Ối! Không tìm thấy trang!",
     "Oops! Something went wrong": "Oops! An error occurred.",
     "Open": "Mở",

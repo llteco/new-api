@@ -3051,6 +3051,7 @@
     "Only successful requests": "仅成功的请求",
     "Only successful requests count toward this limit.": "仅成功的请求计入此限制。",
     "Only the last {{value}} log files will be retained; the rest will be deleted.": "将只保留最近 {{value}} 个日志文件，其余将被删除。",
+    "Only this user": "仅此用户",
     "Oops! Page Not Found!": "糟糕！页面未找到！",
     "Oops! Something went wrong": "糟糕！出错了",
     "Open": "打开",

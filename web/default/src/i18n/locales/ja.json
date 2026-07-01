@@ -3051,6 +3051,7 @@
     "Only successful requests": "成功したリクエストのみ",
     "Only successful requests count toward this limit.": "成功したリクエストのみがこの制限にカウントされます。",
     "Only the last {{value}} log files will be retained; the rest will be deleted.": "最新の{{value}}個のログファイルのみ保持され、残りは削除されます。",
+    "Only this user": "このユーザーのみ",
     "Oops! Page Not Found!": "おっと！ページが見つかりません！",
     "Oops! Something went wrong": "おっと！何か問題が発生しました",
     "Open": "開く",

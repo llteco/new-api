@@ -3051,6 +3051,7 @@
     "Only successful requests": "Uniquement les requêtes réussies",
     "Only successful requests count toward this limit.": "Seules les requêtes réussies comptent pour cette limite.",
     "Only the last {{value}} log files will be retained; the rest will be deleted.": "Seuls les {{value}} derniers fichiers journaux seront conservés ; le reste sera supprimé.",
+    "Only this user": "Seul cet utilisateur",
     "Oops! Page Not Found!": "Oups ! Page introuvable !",
     "Oops! Something went wrong": "Oups ! Quelque chose s'est mal passé",
     "Open": "Ouvrir",
