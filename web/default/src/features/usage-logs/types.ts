@@ -120,6 +120,7 @@ export interface LogOtherData {
       original: number
       clamped: number
     }
+    request_headers?: Record<string, string>
   }
   // Language-independent operation descriptor (audit/login logs).
   // Frontend renders localized content from action + params via i18n templates.

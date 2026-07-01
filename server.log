@@ -1,0 +1,195 @@
+[SYS] 2026/07/07 - 21:58:27 | initializing token encoders 
+[SYS] 2026/07/07 - 21:58:27 | token encoders initialized 
+[SYS] 2026/07/07 - 21:58:27 | SQL_DSN not set, using SQLite as database 
+[SYS] 2026/07/07 - 21:58:27 | database migration started 
+[SYS] 2026/07/07 - 21:58:27 | system is already initialized at: 2026-06-14 11:30:13 +0800 CST 
+[SYS] 2026/07/07 - 21:58:27 | REDIS_CONN_STRING not set, Redis is not enabled 
+[SYS] 2026/07/07 - 21:58:27 | i18n initialized with languages: zh-CN, zh-TW, en 
+[SYS] 2026/07/07 - 21:58:27 | Loaded 0 custom OAuth providers 
+[SYS] 2026/07/07 - 21:58:27 | New API v0.0.0 started 
+[SYS] 2026/07/07 - 21:58:27 | memory cache enabled 
+[SYS] 2026/07/07 - 21:58:27 | sync frequency: 60 seconds 
+[SYS] 2026/07/07 - 21:58:27 | channels synced from database 
+[SYS] 2026/07/07 - 21:58:27 | 正在更新数据看板数据... 
+[SYS] 2026/07/07 - 21:58:27 | 保存数据看板数据成功，共保存0条数据 
+[INFO] 2026/07/07 - 21:58:27 | SYSTEM | subscription quota reset task started: tick=1m0s 
+[INFO] 2026/07/07 - 21:58:27 | SYSTEM | codex credential auto-refresh task started: tick=10m0s threshold=24h0m0s 
+[INFO] 2026/07/07 - 21:58:27 | SYSTEM | system task runner started: runner=Nightmare-BfoMulhq idle_interval=15s 
+
+  [32m元启AI中枢 v0.0.0[0m  ready in 215 ms
+
+  ➜  [1mLocal:[0m   http://localhost:3000/
+  ➜  [1mNetwork:[0m http://192.168.20.2:3000/
+  ➜  [1mNetwork:[0m http://192.168.3.201:3000/
+
+[INFO] 2026/07/07 - 21:59:14 | 20260707135914265091100ir8oVDz6RaGJ4M21 | 用户 4 额度充足, 信任且不需要预扣费 (funding=wallet) 
+[ERR] 2026/07/07 - 21:59:14 | 20260707135914265091100ir8oVDz6RaGJ4M21 | channel error (channel #10, status code: 400): invalid temperature: only 1 is allowed for this model 
+[INFO] 2026/07/07 - 21:59:14 | 20260707135914265091100ir8oVDz6RaGJ4M21 | record error log: userId=4, channelId=10, modelName=kimi-for-coding, tokenName=xiaotao, content=status_code=400, invalid temperature: only 1 is allowed for this model 
+[ERR] 2026/07/07 - 21:59:14 | 20260707135914265091100ir8oVDz6RaGJ4M21 | relay error: invalid temperature: only 1 is allowed for this model 
+[GIN] 2026/07/07 - 21:59:14 | relay | 20260707135914265091100ir8oVDz6RaGJ4M21 | 400 |    560.6458ms |             ::1 |    POST /v1/chat/completions
+[SYS] 2026/07/07 - 21:59:27 | syncing channels from database 
+[SYS] 2026/07/07 - 21:59:27 | syncing options from database 
+[SYS] 2026/07/07 - 21:59:27 | channels synced from database 
+[GIN] 2026/07/07 - 21:59:36 | web | 20260707135936816675900ir8oVDz641wWjU1t | 200 |       503.8µs |             ::1 |     GET /usage-logs/common
+[GIN] 2026/07/07 - 21:59:36 | api | 20260707135936950213400ir8oVDz69EbsUvAD | 200 |       698.9µs |             ::1 |     GET /api/status
+[GIN] 2026/07/07 - 21:59:36 | api | 20260707135936951457300ir8oVDz6YvSK3Z9R | 200 |       576.6µs |             ::1 |     GET /api/user/self
+[GIN] 2026/07/07 - 21:59:37 | api | 20260707135937029128500ir8oVDz6w4vD66w0 | 200 |            0s |             ::1 |     GET /api/status
+[GIN] 2026/07/07 - 21:59:37 | api | 20260707135937035845500ir8oVDz6uWtMhWYp | 200 |            0s |             ::1 |     GET /api/status
+[GIN] 2026/07/07 - 21:59:37 | api | 20260707135937036349700ir8oVDz6INuMyj2E | 200 |       510.6µs |             ::1 |     GET /api/notice
+[GIN] 2026/07/07 - 21:59:37 | api | 20260707135937035845500ir8oVDz6PoBQFM7J | 200 |      9.2992ms |             ::1 |     GET /api/log/stat?p=1&page_size=1&start_timestamp=1783353600&end_timestamp=1783436377
+[GIN] 2026/07/07 - 21:59:37 | api | 20260707135937080060900ir8oVDz68l8T27Md | 200 |      3.2377ms |             ::1 |     GET /api/log/?p=1&page_size=100&start_timestamp=1783353600&end_timestamp=1783436377
+[SYS] 2026/07/07 - 22:00:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:00:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:00:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:01:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:01:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:01:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:02:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:02:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:02:27 | channels synced from database 
+[INFO] 2026/07/07 - 22:03:03 | 20260707140303143662500ir8oVDz6LEG33jGM | 用户 1 额度充足, 信任且不需要预扣费 (funding=wallet) 
+[INFO] 2026/07/07 - 22:03:06 | 20260707140303143662500ir8oVDz6LEG33jGM | 预扣费后补扣费：＄0.000116（实际消耗：＄0.000116，预扣费：＄0.000000） 
+[INFO] 2026/07/07 - 22:03:06 | 20260707140303143662500ir8oVDz6LEG33jGM | record consume log: userId=1, params={"channel_id":10,"prompt_tokens":12,"completion_tokens":103,"model_name":"kimi-for-coding","token_name":"admin","quota":58,"content":"","token_id":15,"use_time_seconds":3,"is_stream":false,"group":"default","other":{"admin_info":{"is_multi_key":true,"multi_key_index":0,"use_channel":["10"]},"billing_source":"wallet","cache_ratio":1,"cache_tokens":0,"completion_ratio":1,"frt":-1000,"group_ratio":1,"model_price":-1,"model_ratio":0.5,"request_conversion":["OpenAI Compatible"],"request_path":"/v1/chat/completions","user_group_ratio":-1}} 
+[GIN] 2026/07/07 - 22:03:06 | relay | 20260707140303143662500ir8oVDz6LEG33jGM | 200 |    3.5176785s |             ::1 |    POST /v1/chat/completions
+[INFO] 2026/07/07 - 22:03:07 | 20260707140307686227600ir8oVDz62VWeJHQy | 用户 1 额度充足, 信任且不需要预扣费 (funding=wallet) 
+[INFO] 2026/07/07 - 22:03:09 | 20260707140307686227600ir8oVDz62VWeJHQy | 预扣费后补扣费：＄0.000136（实际消耗：＄0.000136，预扣费：＄0.000000） 
+[INFO] 2026/07/07 - 22:03:09 | 20260707140307686227600ir8oVDz62VWeJHQy | record consume log: userId=1, params={"channel_id":10,"prompt_tokens":11,"completion_tokens":124,"model_name":"kimi-for-coding","token_name":"admin","quota":68,"content":"","token_id":15,"use_time_seconds":2,"is_stream":false,"group":"default","other":{"admin_info":{"is_multi_key":true,"multi_key_index":1,"use_channel":["10"]},"billing_source":"wallet","cache_ratio":1,"cache_tokens":11,"completion_ratio":1,"frt":-1000,"group_ratio":1,"model_price":-1,"model_ratio":0.5,"request_conversion":["OpenAI Compatible"],"request_path":"/v1/chat/completions","user_group_ratio":-1}} 
+[GIN] 2026/07/07 - 22:03:09 | relay | 20260707140307686227600ir8oVDz62VWeJHQy | 200 |    1.5399921s |             ::1 |    POST /v1/chat/completions
+[GIN] 2026/07/07 - 22:03:13 | relay | 20260707140313208591300ir8oVDz6q5WGx44a | 429 |         504µs |             ::1 |    POST /v1/chat/completions
+[GIN] 2026/07/07 - 22:03:16 | web | 20260707140316068464900ir8oVDz6dACEu50J | 200 |            0s |             ::1 |     GET /usage-logs/common
+[GIN] 2026/07/07 - 22:03:16 | api | 20260707140316171431100ir8oVDz6q4GxxkCh | 200 |       540.7µs |             ::1 |     GET /api/status
+[GIN] 2026/07/07 - 22:03:16 | api | 20260707140316171971800ir8oVDz68jccZQ9W | 200 |       1.038ms |             ::1 |     GET /api/user/self
+[GIN] 2026/07/07 - 22:03:16 | api | 20260707140316243392600ir8oVDz6t2rcstU7 | 200 |            0s |             ::1 |     GET /api/status
+[GIN] 2026/07/07 - 22:03:16 | api | 20260707140316250155900ir8oVDz64R0Elg1W | 200 |         505µs |             ::1 |     GET /api/status
+[GIN] 2026/07/07 - 22:03:16 | api | 20260707140316251191800ir8oVDz6XrwPswbJ | 200 |            0s |             ::1 |     GET /api/notice
+[GIN] 2026/07/07 - 22:03:16 | api | 20260707140316250155900ir8oVDz6sxWd6ImD | 200 |     19.5166ms |             ::1 |     GET /api/log/stat?p=1&page_size=1&start_timestamp=1783353600&end_timestamp=1783436596
+[GIN] 2026/07/07 - 22:03:16 | api | 20260707140316273198200ir8oVDz6dXkiaLBg | 200 |      3.8239ms |             ::1 |     GET /api/log/?p=1&page_size=100&start_timestamp=1783353600&end_timestamp=1783436596
+[SYS] 2026/07/07 - 22:03:27 | 正在更新数据看板数据... 
+[SYS] 2026/07/07 - 22:03:27 | syncing channels from database 
+
+2026/07/07 22:03:27 [31;1mC:/Users/twytw/works/new-api/model/usedata.go:113 [35;1mrecord not found
+[0m[33m[8.440ms] [34;1m[rows:0][0m SELECT * FROM `quota_data` WHERE user_id = 1 and username = "tangwy" and model_name = "kimi-for-coding" and created_at = 1783432800 and use_group = "default" and token_id = 15 and channel_id = 10 and node_name = "Nightmare" ORDER BY `quota_data`.`id` LIMIT 1
+[SYS] 2026/07/07 - 22:03:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:03:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:03:27 | 保存数据看板数据成功，共保存1条数据 
+[GIN] 2026/07/07 - 22:03:30 | relay | 20260707140330852544200ir8oVDz6FLJsEbYO | 429 |            0s |             ::1 |    POST /v1/chat/completions
+[SYS] 2026/07/07 - 22:04:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:04:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:04:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:05:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:05:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:05:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:06:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:06:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:06:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:07:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:07:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:07:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:08:27 | 正在更新数据看板数据... 
+[SYS] 2026/07/07 - 22:08:27 | 保存数据看板数据成功，共保存0条数据 
+[SYS] 2026/07/07 - 22:08:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:08:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:08:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:09:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:09:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:09:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:10:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:10:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:10:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:11:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:11:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:11:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:12:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:12:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:12:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:13:27 | 正在更新数据看板数据... 
+[SYS] 2026/07/07 - 22:13:27 | 保存数据看板数据成功，共保存0条数据 
+[SYS] 2026/07/07 - 22:13:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:13:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:13:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:14:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:14:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:14:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:15:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:15:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:15:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:16:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:16:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:16:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:17:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:17:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:17:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:18:27 | 正在更新数据看板数据... 
+[SYS] 2026/07/07 - 22:18:27 | 保存数据看板数据成功，共保存0条数据 
+[SYS] 2026/07/07 - 22:18:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:18:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:18:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:19:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:19:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:19:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:20:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:20:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:20:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:21:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:21:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:21:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:22:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:22:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:22:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:23:27 | 正在更新数据看板数据... 
+[SYS] 2026/07/07 - 22:23:27 | 保存数据看板数据成功，共保存0条数据 
+[SYS] 2026/07/07 - 22:23:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:23:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:23:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:24:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:24:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:24:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:25:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:25:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:25:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:26:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:26:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:26:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:27:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:27:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:27:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:28:27 | 正在更新数据看板数据... 
+[SYS] 2026/07/07 - 22:28:27 | 保存数据看板数据成功，共保存0条数据 
+[SYS] 2026/07/07 - 22:28:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:28:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:28:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:29:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:29:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:29:27 | channels synced from database 
+[ERR] 2026/07/07 - 22:30:00 | 20260707143000054922300ir8oVDz6JXFeJcBN | user 4 | Model name not specified, model name cannot be empty 
+[GIN] 2026/07/07 - 22:30:00 | relay | 20260707143000054922300ir8oVDz6JXFeJcBN | 400 |       800.2µs |             ::1 |    POST /v1/chat/completions
+[ERR] 2026/07/07 - 22:30:01 | 20260707143001141594800ir8oVDz6nAC33Iz0 | user 4 | Model name not specified, model name cannot be empty 
+[GIN] 2026/07/07 - 22:30:01 | relay | 20260707143001141594800ir8oVDz6nAC33Iz0 | 400 |         503µs |             ::1 |    POST /v1/chat/completions
+[GIN] 2026/07/07 - 22:30:02 | relay | 20260707143002204321600ir8oVDz65Z5m8cvJ | 429 |            0s |             ::1 |    POST /v1/chat/completions
+[GIN] 2026/07/07 - 22:30:13 | web | 20260707143013949095700ir8oVDz63LQry4pf | 200 |            0s |             ::1 |     GET /usage-logs/common
+[GIN] 2026/07/07 - 22:30:14 | api | 20260707143014052425700ir8oVDz6gCmGg0SW | 200 |            0s |             ::1 |     GET /api/status
+[GIN] 2026/07/07 - 22:30:14 | api | 20260707143014052425700ir8oVDz6SvmXh9nP | 200 |       503.1µs |             ::1 |     GET /api/user/self
+[GIN] 2026/07/07 - 22:30:14 | api | 20260707143014134235400ir8oVDz6Bgj8TkTA | 200 |            0s |             ::1 |     GET /api/status
+[GIN] 2026/07/07 - 22:30:14 | api | 20260707143014140298900ir8oVDz6RWVMOfWv | 200 |            0s |             ::1 |     GET /api/notice
+[GIN] 2026/07/07 - 22:30:14 | api | 20260707143014140298900ir8oVDz6mTRUoXlx | 200 |            0s |             ::1 |     GET /api/status
+[GIN] 2026/07/07 - 22:30:14 | api | 20260707143014141350800ir8oVDz6UbOZmUw9 | 200 |      8.3024ms |             ::1 |     GET /api/log/stat?p=1&page_size=1&start_timestamp=1783353600&end_timestamp=1783438214
+[GIN] 2026/07/07 - 22:30:14 | api | 20260707143014184658300ir8oVDz6DkilclgH | 200 |      3.8584ms |             ::1 |     GET /api/log/?p=1&page_size=100&start_timestamp=1783353600&end_timestamp=1783438214
+[SYS] 2026/07/07 - 22:30:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:30:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:30:27 | channels synced from database 
+[GIN] 2026/07/07 - 22:30:51 | api | 20260707143051769416400ir8oVDz6F7PcFksd | 401 |       503.8µs |             ::1 |     GET /api/log/?type=5&page_size=10&start_timestamp=0&end_timestamp=9999999999
+[SYS] 2026/07/07 - 22:31:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:31:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:31:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:32:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:32:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:32:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:33:27 | 正在更新数据看板数据... 
+[SYS] 2026/07/07 - 22:33:27 | 保存数据看板数据成功，共保存0条数据 
+[SYS] 2026/07/07 - 22:33:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:33:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:33:27 | channels synced from database 
+[SYS] 2026/07/07 - 22:34:27 | syncing options from database 
+[SYS] 2026/07/07 - 22:34:27 | syncing channels from database 
+[SYS] 2026/07/07 - 22:34:27 | channels synced from database 
+exit status 1
