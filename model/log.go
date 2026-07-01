@@ -56,6 +56,46 @@ func sanitizeClickHouseLikePattern(input string) (string, error) {
 	return input, nil
 }
 
+// sensitiveHeaderNames contains header names that must never be stored in logs.
+var sensitiveHeaderNames = map[string]struct{}{
+	"authorization":       {},
+	"cookie":              {},
+	"proxy-authorization": {},
+	"x-api-key":           {},
+	"x-goog-api-key":      {},
+	"api-key":             {},
+}
+
+// appendRequestHeaders extracts non-sensitive request headers from the Gin
+// context and stores them under other["admin_info"]["request_headers"].
+// This keeps them admin-only because formatUserLogs strips admin_info for
+// non-admin users.
+func appendRequestHeaders(c *gin.Context, other map[string]interface{}) {
+	if c == nil || c.Request == nil || len(c.Request.Header) == 0 || other == nil {
+		return
+	}
+	headers := make(map[string]string, len(c.Request.Header))
+	for key := range c.Request.Header {
+		if _, sensitive := sensitiveHeaderNames[strings.ToLower(key)]; sensitive {
+			continue
+		}
+		value := strings.TrimSpace(c.Request.Header.Get(key))
+		if value == "" {
+			continue
+		}
+		headers[key] = value
+	}
+	if len(headers) == 0 {
+		return
+	}
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	if !ok || adminInfo == nil {
+		adminInfo = make(map[string]interface{})
+		other["admin_info"] = adminInfo
+	}
+	adminInfo["request_headers"] = headers
+}
+
 type Log struct {
 	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:2;index:idx_user_id_id,priority:2"`
 	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
@@ -112,15 +152,15 @@ func clickHouseLogOrder(prefix string) string {
 // the single source of truth for server-side sorting so arbitrary
 // user input can never reach the SQL string.
 var logSortableColumns = map[string]string{
-	"created_at":       "created_at",
-	"prompt_tokens":    "prompt_tokens",
+	"created_at":        "created_at",
+	"prompt_tokens":     "prompt_tokens",
 	"completion_tokens": "completion_tokens",
-	"quota":            "quota",
-	"use_time":         "use_time",
-	"model_name":       "model_name",
-	"username":         "username",
-	"token_name":       "token_name",
-	"channel_id":       "channel_id",
+	"quota":             "quota",
+	"use_time":          "use_time",
+	"model_name":        "model_name",
+	"username":          "username",
+	"token_name":        "token_name",
+	"channel_id":        "channel_id",
 }
 
 // resolveLogSortOrder returns a safe ORDER BY clause for the logs
@@ -343,6 +383,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	appendRequestHeaders(c, other)
 	otherStr := common.MapToJsonStr(other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -407,6 +448,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
+	appendRequestHeaders(c, params.Other)
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false

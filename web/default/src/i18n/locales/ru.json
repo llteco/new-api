@@ -3639,6 +3639,7 @@
     "Request Header Field": "Поле заголовка запроса",
     "Request Header Override": "Переопределение заголовков запроса",
     "Request Header Overrides": "Переопределения заголовков запроса",
+    "Request Headers": "Заголовки запроса",
     "Request ID": "ID запроса",
     "Request Limits": "Лимиты запросов",
     "Request Model": "Запрошенная модель",

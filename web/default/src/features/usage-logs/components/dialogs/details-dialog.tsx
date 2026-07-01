@@ -704,6 +704,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         )}
 
+        {/* Request headers (admin only) */}
+        {props.isAdmin &&
+          other?.admin_info?.request_headers &&
+          Object.keys(other.admin_info.request_headers).length > 0 && (
+            <DetailSection
+              icon={<Globe className='size-3.5' aria-hidden='true' />}
+              label={t('Request Headers')}
+            >
+              {Object.entries(other.admin_info.request_headers)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([name, value]) => (
+                  <DetailRow key={name} label={name} value={value} mono />
+                ))}
+            </DetailSection>
+          )}
+
         {/* Reject reason (admin only) */}
         {props.isAdmin && other?.reject_reason && (
           <DetailSection
