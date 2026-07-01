@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -83,9 +84,10 @@ type logAutoExportData struct {
 }
 
 type logHourDetail struct {
-	Prompt     int64 `json:"prompt"`
-	Completion int64 `json:"completion"`
-	Cache      int64 `json:"cache"`
+	Prompt     int64    `json:"prompt"`
+	Completion int64    `json:"completion"`
+	Cache      int64    `json:"cache"`
+	Types      []string `json:"types,omitempty"`
 }
 
 func runLogAutoExport(ctx context.Context) error {
@@ -157,6 +159,7 @@ func buildLogExportData(logs []*model.Log) logAutoExportData {
 		cacheTokens := int64(0)
 
 		// Extract cache_tokens from Other field
+		var typeLabel string
 		if log.Other != "" {
 			otherMap, _ := common.StrToMap(log.Other)
 			if otherMap != nil {
@@ -168,6 +171,19 @@ func buildLogExportData(logs []*model.Log) logAutoExportData {
 						cacheTokens = int64(val)
 					case int64:
 						cacheTokens = val
+					}
+				}
+				if conv, ok := otherMap["request_conversion"]; ok {
+					if convArr, ok := conv.([]interface{}); ok && len(convArr) > 0 {
+						parts := make([]string, 0, len(convArr))
+						for _, item := range convArr {
+							if s, ok := item.(string); ok {
+								parts = append(parts, s)
+							}
+						}
+						if len(parts) > 0 {
+							typeLabel = strings.Join(parts, " → ")
+						}
 					}
 				}
 			}
@@ -194,6 +210,18 @@ func buildLogExportData(logs []*model.Log) logAutoExportData {
 		detail.Prompt += promptTokens
 		detail.Completion += completionTokens
 		detail.Cache += cacheTokens
+		if typeLabel != "" {
+			found := false
+			for _, t := range detail.Types {
+				if t == typeLabel {
+					found = true
+					break
+				}
+			}
+			if !found {
+				detail.Types = append(detail.Types, typeLabel)
+			}
+		}
 		data.Details[username][hourKey][modelName] = detail
 	}
 
