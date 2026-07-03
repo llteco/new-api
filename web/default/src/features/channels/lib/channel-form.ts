@@ -23,7 +23,7 @@ import {
   ERROR_MESSAGES,
   MODEL_FETCHABLE_TYPES,
 } from '../constants'
-import type { Channel } from '../types'
+import type { Channel, LimitPattern } from '../types'
 import {
   CHANNEL_TYPE_ADVANCED_CUSTOM,
   advancedCustomConfigUsesRelativeUpstreamPath,
@@ -654,6 +654,7 @@ function normalizeBaseUrl(value: string | undefined): string {
 export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   mode: 'single' | 'batch' | 'multi_to_single'
   multi_key_mode?: 'random' | 'polling'
+  multi_key_limit_patterns?: LimitPattern[]
   batch_add_set_key_prefix_2_name?: boolean
   channel: Partial<Channel>
 } {
@@ -694,6 +695,8 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     mode,
     multi_key_mode:
       mode === 'multi_to_single' ? formData.multi_key_type : undefined,
+    multi_key_limit_patterns:
+      mode === 'multi_to_single' ? (formData.multi_key_limit_patterns ?? []) : undefined,
     batch_add_set_key_prefix_2_name:
       mode === 'batch' ? formData.batch_add_set_key_prefix_2_name : undefined,
     channel,
@@ -752,6 +755,10 @@ export function transformFormDataToUpdatePayload(
   payload.status_code_mapping = formData.status_code_mapping || ''
   payload.param_override = formData.param_override || ''
   payload.header_override = formData.header_override || ''
+
+  if (formData.multi_key_limit_patterns) {
+    ;(payload as Record<string, unknown>).multi_key_limit_patterns = formData.multi_key_limit_patterns
+  }
 
   return payload
 }
