@@ -61,3 +61,48 @@ func TestDetectKeyLimitNoMatch(t *testing.T) {
 	matched, _, _ := DetectKeyLimit(info, "something else")
 	assert.False(t, matched)
 }
+
+func TestDetectKeyLimitPastResetTimeFallsBack(t *testing.T) {
+	info := model.ChannelInfo{
+		MultiKeyLimitPatterns: []model.LimitPattern{
+			{
+				Name:           "past quota",
+				Regex:          `limit (?P<reset>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})`,
+				DateLayout:     "2006-01-02 15:04:05",
+				DefaultMinutes: 5,
+			},
+		},
+	}
+	// A reset time clearly in the past -> parser must fall back to DefaultMinutes.
+	msg := "limit 2000-01-01 00:00:00"
+	matched, cooldownUntil, reason := DetectKeyLimit(info, msg)
+	require.True(t, matched)
+	assert.Contains(t, reason, "fallback")
+	assert.InDelta(t, common.GetTimestamp()+5*60, cooldownUntil, 3)
+}
+
+func TestDetectKeyLimitDefaultMinutesFallbackToTen(t *testing.T) {
+	info := model.ChannelInfo{
+		MultiKeyLimitPatterns: []model.LimitPattern{
+			{
+				Name:   "no minutes",
+				Regex:  `rate limited`,
+			},
+		},
+	}
+	matched, cooldownUntil, _ := DetectKeyLimit(info, "rate limited")
+	require.True(t, matched)
+	assert.InDelta(t, common.GetTimestamp()+10*60, cooldownUntil, 3)
+}
+
+func TestDetectKeyLimitSkipsInvalidRegex(t *testing.T) {
+	info := model.ChannelInfo{
+		MultiKeyLimitPatterns: []model.LimitPattern{
+			{Name: "bad", Regex: `[`, DefaultMinutes: 10},
+			{Name: "good", Regex: `quota`, DefaultMinutes: 7},
+		},
+	}
+	matched, _, reason := DetectKeyLimit(info, "quota exceeded")
+	require.True(t, matched)
+	assert.Contains(t, reason, "good")
+}
