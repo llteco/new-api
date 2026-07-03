@@ -52,7 +52,7 @@ import {
   disableAllMultiKeys,
   deleteDisabledMultiKeys,
 } from '../../api'
-import { MULTI_KEY_FILTER_OPTIONS } from '../../constants'
+import { MULTI_KEY_FILTER_OPTIONS, MULTI_KEY_STATUS } from '../../constants'
 import {
   channelsQueryKeys,
   formatTimestamp,
@@ -418,7 +418,16 @@ export function MultiKeyManageDialog({
                     header: t('Disabled Time'),
                     className: 'w-44',
                     cellClassName: 'text-muted-foreground text-sm',
-                    cell: (key) => formatKeyTimestamp(key.disabled_time),
+                    cell: (key) =>
+                      key.status === MULTI_KEY_STATUS.TEMP_DISABLED &&
+                      key.cooldown_until ? (
+                        <span>
+                          {t('Limited until')}:{' '}
+                          {formatKeyTimestamp(key.cooldown_until)}
+                        </span>
+                      ) : (
+                        formatKeyTimestamp(key.disabled_time)
+                      ),
                   },
                   {
                     id: 'actions',

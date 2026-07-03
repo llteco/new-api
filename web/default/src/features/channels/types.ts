@@ -226,8 +226,9 @@ export interface CopyChannelResponse {
 
 export interface KeyStatus {
   index: number
-  status: number // 1: enabled, 2: manual disabled, 3: auto disabled
+  status: number // 1: enabled, 2: manual disabled, 3: auto disabled, 4: temp disabled (cooldown)
   disabled_time?: number
+  cooldown_until?: number // unix seconds; present when status === 4
   reason?: string
   key_preview?: string
 }

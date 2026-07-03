@@ -1434,11 +1434,12 @@ type MultiKeyStatusResponse struct {
 }
 
 type KeyStatus struct {
-	Index        int    `json:"index"`
-	Status       int    `json:"status"` // 1: enabled, 2: disabled
-	DisabledTime int64  `json:"disabled_time,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	KeyPreview   string `json:"key_preview"` // first 10 chars of key for identification
+	Index         int    `json:"index"`
+	Status        int    `json:"status"` // 1: enabled, 2: disabled
+	DisabledTime  int64  `json:"disabled_time,omitempty"`
+	CooldownUntil int64  `json:"cooldown_until,omitempty"` // unix seconds; set when Status == ChannelStatusTempDisabled
+	Reason        string `json:"reason,omitempty"`
+	KeyPreview    string `json:"key_preview"` // first 10 chars of key for identification
 }
 
 // ManageMultiKeys handles multi-key management operations
@@ -1508,6 +1509,7 @@ func ManageMultiKeys(c *gin.Context) {
 		for i, key := range keys {
 			status := 1 // default enabled
 			var disabledTime int64
+			var cooldownUntil int64
 			var reason string
 
 			if channel.ChannelInfo.MultiKeyStatusList != nil {
@@ -1534,6 +1536,9 @@ func ManageMultiKeys(c *gin.Context) {
 					reason = channel.ChannelInfo.MultiKeyDisabledReason[i]
 				}
 			}
+			if status == common.ChannelStatusTempDisabled && channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+				cooldownUntil = channel.ChannelInfo.MultiKeyCooldownUntil[i]
+			}
 
 			// Create key preview (first 10 chars)
 			keyPreview := key
@@ -1542,11 +1547,12 @@ func ManageMultiKeys(c *gin.Context) {
 			}
 
 			allKeyStatusList = append(allKeyStatusList, KeyStatus{
-				Index:        i,
-				Status:       status,
-				DisabledTime: disabledTime,
-				Reason:       reason,
-				KeyPreview:   keyPreview,
+				Index:         i,
+				Status:        status,
+				DisabledTime:  disabledTime,
+				CooldownUntil: cooldownUntil,
+				Reason:        reason,
+				KeyPreview:    keyPreview,
 			})
 		}
 
