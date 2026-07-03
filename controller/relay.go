@@ -356,6 +356,18 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
+	// Try to detect a per-key limit/cooldown first.
+	if channelError.IsMultiKey {
+		channel, getErr := model.GetChannelById(channelError.ChannelId, true)
+		if getErr == nil && channel != nil && len(channel.ChannelInfo.MultiKeyLimitPatterns) > 0 {
+			matched, cooldownUntil, reason := service.DetectKeyLimit(channel.ChannelInfo, err.Error())
+			if matched {
+				model.UpdateChannelKeyLimitStatus(channelError.ChannelId, channelError.UsingKey, cooldownUntil, reason)
+				logger.LogError(c, fmt.Sprintf("channel #%d key %q temp disabled: %s", channelError.ChannelId, channelError.UsingKey, reason))
+				return
+			}
+		}
+	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
 	if service.ShouldDisableChannel(err) && channelError.AutoBan {
