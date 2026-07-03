@@ -725,7 +725,7 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 		if status == common.ChannelStatusEnabled && channel.ChannelInfo.MultiKeyCooldownUntil != nil {
 			delete(channel.ChannelInfo.MultiKeyCooldownUntil, keyIndex)
 		}
-		if !hasEnabledMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) {
+		if !hasEnabledMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) && !hasCoolingMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) {
 			channel.Status = common.ChannelStatusAutoDisabled
 			info := channel.GetOtherInfo()
 			info["status_reason"] = "All keys are disabled"
@@ -744,6 +744,19 @@ func hasEnabledMultiKey(keys []string, statusList map[int]int) bool {
 		}
 		status, ok := statusList[i]
 		if !ok || status == common.ChannelStatusEnabled {
+			return true
+		}
+	}
+	return false
+}
+
+// hasCoolingMultiKey reports whether any key is temporarily disabled (cooling down)
+// and may recover when its cooldown expires. Such keys keep the channel selectable
+// so the distributor keeps reaching GetNextEnabledKey, which lazily re-enables
+// expired cooldowns instead of hard-disabling the whole channel.
+func hasCoolingMultiKey(keys []string, statusList map[int]int) bool {
+	for i := range keys {
+		if s, ok := statusList[i]; ok && s == common.ChannelStatusTempDisabled {
 			return true
 		}
 	}

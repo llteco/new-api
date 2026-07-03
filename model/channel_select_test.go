@@ -45,3 +45,33 @@ func TestGetNextEnabledKeyReenablesExpiredCooldown(t *testing.T) {
 	assert.NotContains(t, channel.ChannelInfo.MultiKeyStatusList, 0)
 	assert.NotContains(t, channel.ChannelInfo.MultiKeyCooldownUntil, 0)
 }
+
+func TestHandlerMultiKeyUpdateAllCoolingDoesNotAutoDisable(t *testing.T) {
+	channel := &Channel{
+		Id:  1,
+		Key: "k1\nk2",
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:            true,
+			MultiKeySize:          2,
+			MultiKeyStatusList:    map[int]int{0: common.ChannelStatusTempDisabled},
+			MultiKeyCooldownUntil: map[int]int64{0: common.GetTimestamp() + 3600},
+		},
+	}
+	cooldown := common.GetTimestamp() + 3600
+	handlerMultiKeyUpdate(channel, "k2", common.ChannelStatusTempDisabled, "limit hit", &cooldown)
+	assert.NotEqual(t, common.ChannelStatusAutoDisabled, channel.Status)
+}
+
+func TestHandlerMultiKeyUpdateAllManuallyDisabledStillAutoDisables(t *testing.T) {
+	channel := &Channel{
+		Id:  2,
+		Key: "k1\nk2",
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeySize:       2,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusManuallyDisabled},
+		},
+	}
+	handlerMultiKeyUpdate(channel, "k2", common.ChannelStatusManuallyDisabled, "manual", nil)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+}
