@@ -1519,17 +1519,17 @@ func ManageMultiKeys(c *gin.Context) {
 				}
 			}
 
-		// Count for statistics (all keys)
-		switch status {
-		case 1:
-			enabledCount++
-		case 2:
-			manualDisabledCount++
-		case 3:
-			autoDisabledCount++
-		case common.ChannelStatusTempDisabled:
-			tempDisabledCount++
-		}
+			// Count for statistics (all keys)
+			switch status {
+			case 1:
+				enabledCount++
+			case 2:
+				manualDisabledCount++
+			case 3:
+				autoDisabledCount++
+			case common.ChannelStatusTempDisabled:
+				tempDisabledCount++
+			}
 
 			if status != 1 {
 				if channel.ChannelInfo.MultiKeyDisabledTime != nil {
@@ -1603,10 +1603,10 @@ func ManageMultiKeys(c *gin.Context) {
 				Page:                page,
 				PageSize:            pageSize,
 				TotalPages:          totalPages,
-			EnabledCount:        enabledCount,        // Overall statistics
-			ManualDisabledCount: manualDisabledCount, // Overall statistics
-			AutoDisabledCount:   autoDisabledCount,   // Overall statistics
-			TempDisabledCount:   tempDisabledCount,   // Overall statistics
+				EnabledCount:        enabledCount,        // Overall statistics
+				ManualDisabledCount: manualDisabledCount, // Overall statistics
+				AutoDisabledCount:   autoDisabledCount,   // Overall statistics
+				TempDisabledCount:   tempDisabledCount,   // Overall statistics
 			},
 		})
 		return
