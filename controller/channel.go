@@ -1663,6 +1663,9 @@ func ManageMultiKeys(c *gin.Context) {
 		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
 			delete(channel.ChannelInfo.MultiKeyDisabledReason, keyIndex)
 		}
+		if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+			delete(channel.ChannelInfo.MultiKeyCooldownUntil, keyIndex)
+		}
 
 		err = channel.Update()
 		if err != nil {
@@ -1687,6 +1690,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
 		channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
 		channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+		channel.ChannelInfo.MultiKeyCooldownUntil = make(map[int]int64)
 
 		err = channel.Update()
 		if err != nil {
@@ -2166,5 +2170,21 @@ func OllamaVersion(c *gin.Context) {
 		"data": gin.H{
 			"version": version,
 		},
+	})
+}
+
+func GetLimitPatternPresets(c *gin.Context) {
+	presets := []model.LimitPattern{
+		{
+			Name:           "7-day quota (Chinese)",
+			Regex:          `已达到 \d+ 天使用上限，(?P<reset>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) 后可继续使用`,
+			DateLayout:     "2006-01-02 15:04:05",
+			DefaultMinutes: 10,
+		},
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    presets,
 	})
 }
