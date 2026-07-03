@@ -1431,6 +1431,7 @@ type MultiKeyStatusResponse struct {
 	EnabledCount        int `json:"enabled_count"`
 	ManualDisabledCount int `json:"manual_disabled_count"`
 	AutoDisabledCount   int `json:"auto_disabled_count"`
+	TempDisabledCount   int `json:"temp_disabled_count"`
 }
 
 type KeyStatus struct {
@@ -1502,7 +1503,7 @@ func ManageMultiKeys(c *gin.Context) {
 		}
 
 		// Statistics for all keys (unchanged by filtering)
-		var enabledCount, manualDisabledCount, autoDisabledCount int
+		var enabledCount, manualDisabledCount, autoDisabledCount, tempDisabledCount int
 
 		// Build all key status data first
 		var allKeyStatusList []KeyStatus
@@ -1518,15 +1519,17 @@ func ManageMultiKeys(c *gin.Context) {
 				}
 			}
 
-			// Count for statistics (all keys)
-			switch status {
-			case 1:
-				enabledCount++
-			case 2:
-				manualDisabledCount++
-			case 3:
-				autoDisabledCount++
-			}
+		// Count for statistics (all keys)
+		switch status {
+		case 1:
+			enabledCount++
+		case 2:
+			manualDisabledCount++
+		case 3:
+			autoDisabledCount++
+		case common.ChannelStatusTempDisabled:
+			tempDisabledCount++
+		}
 
 			if status != 1 {
 				if channel.ChannelInfo.MultiKeyDisabledTime != nil {
@@ -1600,9 +1603,10 @@ func ManageMultiKeys(c *gin.Context) {
 				Page:                page,
 				PageSize:            pageSize,
 				TotalPages:          totalPages,
-				EnabledCount:        enabledCount,        // Overall statistics
-				ManualDisabledCount: manualDisabledCount, // Overall statistics
-				AutoDisabledCount:   autoDisabledCount,   // Overall statistics
+			EnabledCount:        enabledCount,        // Overall statistics
+			ManualDisabledCount: manualDisabledCount, // Overall statistics
+			AutoDisabledCount:   autoDisabledCount,   // Overall statistics
+			TempDisabledCount:   tempDisabledCount,   // Overall statistics
 			},
 		})
 		return
