@@ -2,7 +2,9 @@ package service
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -75,4 +77,46 @@ func ShouldEnableChannel(newAPIError *types.NewAPIError, status int) bool {
 		return false
 	}
 	return true
+}
+
+func DetectKeyLimit(channelInfo model.ChannelInfo, errMessage string) (matched bool, cooldownUntil int64, reason string) {
+	for _, pattern := range channelInfo.MultiKeyLimitPatterns {
+		if pattern.Regex == "" {
+			continue
+		}
+		re, err := regexp.Compile(pattern.Regex)
+		if err != nil {
+			common.SysLog(fmt.Sprintf("invalid multi-key limit pattern %q: %v", pattern.Name, err))
+			continue
+		}
+		groups := re.FindStringSubmatch(errMessage)
+		if groups == nil {
+			continue
+		}
+		resetCapture := ""
+		for i, name := range re.SubexpNames() {
+			if name == "reset" && i < len(groups) {
+				resetCapture = groups[i]
+				break
+			}
+		}
+		fallbackMinutes := pattern.DefaultMinutes
+		if fallbackMinutes <= 0 {
+			fallbackMinutes = 10
+		}
+		now := common.GetTimestamp()
+		if resetCapture != "" && pattern.DateLayout != "" {
+			var parsed time.Time
+			if strings.Contains(pattern.DateLayout, "Z07") || strings.Contains(pattern.DateLayout, "MST") {
+				parsed, err = time.Parse(pattern.DateLayout, resetCapture)
+			} else {
+				parsed, err = time.ParseInLocation(pattern.DateLayout, resetCapture, time.Local)
+			}
+			if err == nil && parsed.Unix() > now {
+				return true, parsed.Unix(), fmt.Sprintf("%s (reset at %s)", pattern.Name, resetCapture)
+			}
+		}
+		return true, now + int64(fallbackMinutes)*60, fmt.Sprintf("%s (fallback %d min)", pattern.Name, fallbackMinutes)
+	}
+	return false, 0, ""
 }
