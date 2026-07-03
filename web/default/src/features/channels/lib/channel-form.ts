@@ -182,6 +182,20 @@ export const channelFormSchema = z
     // Multi-key options (not sent to backend directly)
     multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
     multi_key_type: z.enum(['random', 'polling']).optional(),
+    // ponytail: inline schema (not reusing limitPatternSchema) because its
+    // `.default(10)` on default_minutes splits zod input/output types and
+    // breaks the form's zodResolver typing. The editor always sets
+    // default_minutes, so requiring it here is safe.
+    multi_key_limit_patterns: z
+      .array(
+        z.object({
+          name: z.string().min(1),
+          regex: z.string().min(1),
+          date_layout: z.string().min(1),
+          default_minutes: z.number().int().min(1),
+        })
+      )
+      .optional(),
     batch_add_set_key_prefix_2_name: z.boolean().optional(),
     key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
     // Channel extra settings (stored in setting JSON, not sent directly)
@@ -322,6 +336,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   other: '',
   multi_key_mode: 'single',
   multi_key_type: 'random',
+  multi_key_limit_patterns: [],
   batch_add_set_key_prefix_2_name: false,
   key_mode: 'append',
   // Channel extra settings
@@ -463,6 +478,8 @@ export function transformChannelToFormDefaults(
     other: channel.other || '',
     multi_key_mode: 'single',
     multi_key_type: channel.channel_info.multi_key_mode || 'random',
+    multi_key_limit_patterns:
+      channel.channel_info.multi_key_limit_patterns ?? [],
     batch_add_set_key_prefix_2_name: false,
     key_mode: 'append', // Default to append mode for editing multi-key channels
     // Channel extra settings

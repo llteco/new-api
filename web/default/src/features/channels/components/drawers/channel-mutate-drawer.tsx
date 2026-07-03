@@ -175,6 +175,7 @@ import {
 import { ParamOverrideEditorDialog } from '../dialogs/param-override-editor-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
 import { ModelMappingEditor } from '../model-mapping-editor'
+import { LimitPatternsEditor } from '../limit-patterns-editor'
 import {
   ChannelAdvancedSection,
   ChannelApiAccessSection,
@@ -3086,6 +3087,34 @@ export function ChannelMutateDrawer({
                                     )}
                                   />
                                 )}
+
+                              {(isMultiKeyChannel ||
+                                (!isEditing &&
+                                  multiKeyMode === 'multi_to_single')) && (
+                                <FormField
+                                  control={form.control}
+                                  name='multi_key_limit_patterns'
+                                  render={({ field }) => (
+                                    <FormItem>
+                                      <FormLabel>
+                                        {t('Limit Detection Patterns')}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {t(
+                                          'Detect rate-limited keys by regex and cool them down automatically. Only applies to multi-key channels.'
+                                        )}
+                                      </FormDescription>
+                                      <FormControl>
+                                        <LimitPatternsEditor
+                                          value={field.value ?? []}
+                                          onChange={field.onChange}
+                                        />
+                                      </FormControl>
+                                      <FormMessage />
+                                    </FormItem>
+                                  )}
+                                />
+                              )}
                             </ChannelAuthSection>
                           </fieldset>
                         </div>
