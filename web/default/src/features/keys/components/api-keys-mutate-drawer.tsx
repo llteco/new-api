@@ -52,6 +52,13 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Sheet,
   SheetClose,
   SheetContent,
@@ -464,6 +471,38 @@ export function ApiKeysMutateDrawer({
                           : t('Enter the quota amount in {{currency}}', {
                               currency: currencyLabel,
                             })}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+              {!unlimitedQuota && (
+                <FormField
+                  control={form.control}
+                  name='reset_period'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Quota Reset Period')}</FormLabel>
+                      <FormControl>
+                        <Select
+                          value={field.value || 'never'}
+                          onValueChange={field.onChange}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value='never'>{t('Never')}</SelectItem>
+                            <SelectItem value='daily'>{t('Daily')}</SelectItem>
+                            <SelectItem value='weekly'>{t('Weekly')}</SelectItem>
+                            <SelectItem value='monthly'>{t('Monthly')}</SelectItem>
+                            <SelectItem value='test_10s'>{t('Test: every 10 seconds')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </FormControl>
+                      <FormDescription>
+                        {t('Automatically reset quota on a schedule')}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
