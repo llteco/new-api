@@ -205,6 +205,31 @@ func (channel *Channel) GetKeys() []string {
 	return keys
 }
 
+// isKeySelectable reports whether the key at idx may be selected now.
+// A TempDisabled key whose cooldown has expired is re-enabled in place:
+// both its status and cooldown entries are cleared (mutations are safe because
+// callers hold GetChannelPollingLock).
+func (channel *Channel) isKeySelectable(idx int, now int64) bool {
+	statusList := channel.ChannelInfo.MultiKeyStatusList
+	status := common.ChannelStatusEnabled
+	if statusList != nil {
+		if s, ok := statusList[idx]; ok {
+			status = s
+		}
+	}
+	if status == common.ChannelStatusEnabled {
+		return true
+	}
+	if status == common.ChannelStatusTempDisabled {
+		if now >= channel.ChannelInfo.MultiKeyCooldownUntil[idx] {
+			delete(channel.ChannelInfo.MultiKeyStatusList, idx)
+			delete(channel.ChannelInfo.MultiKeyCooldownUntil, idx)
+			return true
+		}
+	}
+	return false
+}
+
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
@@ -222,25 +247,18 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	statusList := channel.ChannelInfo.MultiKeyStatusList
-	// helper to get key status, default to enabled when missing
-	getStatus := func(idx int) int {
-		if statusList == nil {
-			return common.ChannelStatusEnabled
-		}
-		if status, ok := statusList[idx]; ok {
-			return status
-		}
-		return common.ChannelStatusEnabled
-	}
-
-	// Collect indexes of enabled keys
+	// Collect indexes of selectable keys. isKeySelectable re-enables keys whose
+	// temp-disabled cooldown has expired, mutating the status/cooldown maps; track
+	// whether any cleanup occurred so non-polling modes can persist it.
+	now := common.GetTimestamp()
+	cooldownBefore := len(channel.ChannelInfo.MultiKeyCooldownUntil)
 	enabledIdx := make([]int, 0, len(keys))
 	for i := range keys {
-		if getStatus(i) == common.ChannelStatusEnabled {
+		if channel.isKeySelectable(i, now) {
 			enabledIdx = append(enabledIdx, i)
 		}
 	}
+	cleanedUp := len(channel.ChannelInfo.MultiKeyCooldownUntil) != cooldownBefore
 	// If no specific status list or none enabled, return an explicit error so caller can
 	// properly handle a channel with no available keys (e.g. mark channel disabled).
 	// Returning the first key here caused requests to keep using an already-disabled key.
@@ -252,6 +270,10 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	case constant.MultiKeyModeRandom:
 		// Randomly pick one enabled key
 		selectedIdx := enabledIdx[rand.Intn(len(enabledIdx))]
+		// random mode has no deferred save, so persist any cooldown cleanup
+		if cleanedUp {
+			_ = channel.SaveChannelInfo()
+		}
 		return keys[selectedIdx], selectedIdx, nil
 	case constant.MultiKeyModePolling:
 		// Use channel-specific lock to ensure thread-safe polling
@@ -270,14 +292,14 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 				// CacheUpdateChannel(channel)
 			}
 		}()
-		// Start from the saved polling index and look for the next enabled key
+		// Start from the saved polling index and look for the next selectable key
 		start := channelInfo.MultiKeyPollingIndex
 		if start < 0 || start >= len(keys) {
 			start = 0
 		}
 		for i := 0; i < len(keys); i++ {
 			idx := (start + i) % len(keys)
-			if getStatus(idx) == common.ChannelStatusEnabled {
+			if channel.isKeySelectable(idx, now) {
 				// update polling index for next call (point to the next position)
 				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
 				return keys[idx], idx, nil
