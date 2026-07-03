@@ -59,12 +59,21 @@ type Channel struct {
 	Keys []string `json:"-" gorm:"-"`
 }
 
+type LimitPattern struct {
+	Name           string `json:"name"`
+	Regex          string `json:"regex"`
+	DateLayout     string `json:"date_layout"`
+	DefaultMinutes int    `json:"default_minutes"`
+}
+
 type ChannelInfo struct {
 	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
 	MultiKeySize           int                   `json:"multi_key_size"`                      // 多Key模式下的Key数量
 	MultiKeyStatusList     map[int]int           `json:"multi_key_status_list"`               // key状态列表，key index -> status
 	MultiKeyDisabledReason map[int]string        `json:"multi_key_disabled_reason,omitempty"` // key禁用原因列表，key index -> reason
 	MultiKeyDisabledTime   map[int]int64         `json:"multi_key_disabled_time,omitempty"`   // key禁用时间列表，key index -> time
+	MultiKeyCooldownUntil  map[int]int64         `json:"multi_key_cooldown_until,omitempty"`  // key临时禁用冷却到期时间，key index -> unix timestamp
+	MultiKeyLimitPatterns  []LimitPattern        `json:"multi_key_limit_patterns,omitempty"`  // 多Key限流匹配模式列表
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
 }
@@ -561,6 +570,13 @@ func (channel *Channel) Update() error {
 				}
 			}
 		}
+		if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+			for idx := range channel.ChannelInfo.MultiKeyCooldownUntil {
+				if idx >= channel.ChannelInfo.MultiKeySize {
+					delete(channel.ChannelInfo.MultiKeyCooldownUntil, idx)
+				}
+			}
+		}
 	}
 	var err error
 	err = DB.Model(channel).Updates(channel).Error
@@ -638,7 +654,7 @@ func CleanupChannelPollingLocks() {
 	})
 }
 
-func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason string) {
+func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason string, cooldownUntil *int64) {
 	keys := channel.GetKeys()
 	if len(keys) == 0 {
 		channel.Status = status
@@ -678,6 +694,15 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 			channel.ChannelInfo.MultiKeyDisabledReason[keyIndex] = reason
 			channel.ChannelInfo.MultiKeyDisabledTime[keyIndex] = common.GetTimestamp()
 		}
+		if status == common.ChannelStatusTempDisabled && cooldownUntil != nil {
+			if channel.ChannelInfo.MultiKeyCooldownUntil == nil {
+				channel.ChannelInfo.MultiKeyCooldownUntil = make(map[int]int64)
+			}
+			channel.ChannelInfo.MultiKeyCooldownUntil[keyIndex] = *cooldownUntil
+		}
+		if status == common.ChannelStatusEnabled && channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+			delete(channel.ChannelInfo.MultiKeyCooldownUntil, keyIndex)
+		}
 		if !hasEnabledMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) {
 			channel.Status = common.ChannelStatusAutoDisabled
 			info := channel.GetOtherInfo()
@@ -704,6 +729,14 @@ func hasEnabledMultiKey(keys []string, statusList map[int]int) bool {
 }
 
 func UpdateChannelStatus(channelId int, usingKey string, status int, reason string) bool {
+	return updateChannelStatusWithCooldown(channelId, usingKey, status, reason, nil)
+}
+
+func UpdateChannelKeyLimitStatus(channelId int, usingKey string, cooldownUntil int64, reason string) bool {
+	return updateChannelStatusWithCooldown(channelId, usingKey, common.ChannelStatusTempDisabled, reason, &cooldownUntil)
+}
+
+func updateChannelStatusWithCooldown(channelId int, usingKey string, status int, reason string, cooldownUntil *int64) bool {
 	if common.MemoryCacheEnabled {
 		channelStatusLock.Lock()
 		defer channelStatusLock.Unlock()
@@ -718,7 +751,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			pollingLock := GetChannelPollingLock(channelId)
 			pollingLock.Lock()
 			// 如果是多Key模式，更新缓存中的状态
-			handlerMultiKeyUpdate(channelCache, usingKey, status, reason)
+			handlerMultiKeyUpdate(channelCache, usingKey, status, reason, cooldownUntil)
 			pollingLock.Unlock()
 			if beforeStatus != channelCache.Status {
 				CacheUpdateChannelStatus(channelId, channelCache.Status)
@@ -756,7 +789,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			// Protect map writes with the same per-channel lock used by readers
 			pollingLock := GetChannelPollingLock(channelId)
 			pollingLock.Lock()
-			handlerMultiKeyUpdate(channel, usingKey, status, reason)
+			handlerMultiKeyUpdate(channel, usingKey, status, reason, cooldownUntil)
 			pollingLock.Unlock()
 			if beforeStatus != channel.Status {
 				shouldUpdateAbilities = true
