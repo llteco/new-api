@@ -285,6 +285,8 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			return
 		}
 
+		model.MaybeResetTokenQuota(token)
+
 		userCache, err := model.GetUserCache(token.UserId)
 		if err != nil {
 			common.SysLog(fmt.Sprintf("TokenAuthReadOnly GetUserCache error for user %d: %v", token.UserId, err))
@@ -369,6 +371,7 @@ func TokenAuth() func(c *gin.Context) {
 		}
 		token, err := model.ValidateUserToken(key)
 		if token != nil {
+			model.MaybeResetTokenQuota(token)
 			id := c.GetInt("id")
 			if id == 0 {
 				c.Set("id", token.UserId)
