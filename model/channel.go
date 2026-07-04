@@ -690,7 +690,12 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 		}
 		if keyIndex < 0 {
 			if usingKey != "" {
-				common.SysLog(fmt.Sprintf("failed to update multi-key status: channel_id=%d, using key not found", channel.Id))
+				common.SysLog(fmt.Sprintf("[limit-debug] failed to update multi-key status: channel_id=%d, using key not found among %d keys, usingKey=%q, firstKey=%q", channel.Id, len(keys), usingKey, func() string {
+					if len(keys) > 0 {
+						return keys[0]
+					}
+					return ""
+				}()))
 				return
 			}
 			channel.Status = status
