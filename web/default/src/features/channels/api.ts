@@ -33,7 +33,6 @@ import type {
   GetChannelResponse,
   GetChannelsParams,
   GetChannelsResponse,
-  LimitPattern,
   MultiKeyManageParams,
   MultiKeyStatusResponse,
   SearchChannelsParams,
@@ -369,14 +368,6 @@ export async function manageMultiKeys(
     channelActionConfig()
   )
   return res.data
-}
-
-/**
- * Get built-in limit pattern presets for multi-key channels
- */
-export async function getLimitPatternPresets(): Promise<LimitPattern[]> {
-  const res = await api.get('/api/channel/multi_key/limit_pattern_presets')
-  return res.data.data ?? []
 }
 
 /**

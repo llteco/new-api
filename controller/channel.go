@@ -2192,18 +2192,3 @@ func OllamaVersion(c *gin.Context) {
 	})
 }
 
-func GetLimitPatternPresets(c *gin.Context) {
-	presets := []model.LimitPattern{
-		{
-			Name:           "7-day quota (Chinese)",
-			Regex:          `已达到 \d+ 天使用上限，(?P<reset>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) 后可继续使用`,
-			DateLayout:     "2006-01-02 15:04:05",
-			DefaultMinutes: 10,
-		},
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    presets,
-	})
-}

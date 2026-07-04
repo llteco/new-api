@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Plus, Trash2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -27,8 +27,8 @@ import {
   NativeSelectOption,
 } from '@/components/ui/native-select'
 
-import { getLimitPatternPresets } from '../api'
 import {
+  LIMIT_PATTERN_PRESETS,
   PREDEFINED_DATE_LAYOUTS,
   validateLimitPatternRegex,
 } from '../lib/limit-pattern-utils'
@@ -44,7 +44,6 @@ const isPredefinedLayout = (layout: string) =>
 
 export function LimitPatternsEditor(props: LimitPatternsEditorProps) {
   const { t } = useTranslation()
-  const [presets, setPresets] = useState<LimitPattern[]>([])
   const keysRef = useRef<string[]>([])
   const keySeedRef = useRef(0)
   const nextKey = () => `lp-${(keySeedRef.current += 1)}`
@@ -61,12 +60,6 @@ export function LimitPatternsEditor(props: LimitPatternsEditorProps) {
     keysRef.current = nextKeys
     props.onChange(nextValue)
   }
-
-  useEffect(() => {
-    getLimitPatternPresets()
-      .then(setPresets)
-      .catch(() => setPresets([]))
-  }, [])
 
   const updatePattern = (index: number, patch: Partial<LimitPattern>) => {
     emit(
@@ -85,7 +78,7 @@ export function LimitPatternsEditor(props: LimitPatternsEditorProps) {
   }
 
   const loadPreset = (presetName: string) => {
-    const preset = presets.find((pattern) => pattern.name === presetName)
+    const preset = LIMIT_PATTERN_PRESETS.find((pattern) => pattern.name === presetName)
     if (preset) {
       emit([...props.value, { ...preset }], [...keysRef.current, nextKey()])
     }
@@ -112,7 +105,7 @@ export function LimitPatternsEditor(props: LimitPatternsEditorProps) {
         <h4 className='text-sm font-medium'>
           {t('Limit Detection Patterns')}
         </h4>
-        {presets.length > 0 && (
+        {LIMIT_PATTERN_PRESETS.length > 0 && (
           <NativeSelect
             size='sm'
             defaultValue=''
@@ -121,7 +114,7 @@ export function LimitPatternsEditor(props: LimitPatternsEditorProps) {
             <NativeSelectOption value='' disabled>
               {t('Load preset')}
             </NativeSelectOption>
-            {presets.map((preset) => (
+            {LIMIT_PATTERN_PRESETS.map((preset) => (
               <NativeSelectOption key={preset.name} value={preset.name}>
                 {preset.name}
               </NativeSelectOption>
