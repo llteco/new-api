@@ -59,12 +59,21 @@ type Channel struct {
 	Keys []string `json:"-" gorm:"-"`
 }
 
+type LimitPattern struct {
+	Name           string `json:"name"`
+	Regex          string `json:"regex"`
+	DateLayout     string `json:"date_layout"`
+	DefaultMinutes int    `json:"default_minutes"`
+}
+
 type ChannelInfo struct {
 	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
 	MultiKeySize           int                   `json:"multi_key_size"`                      // 多Key模式下的Key数量
 	MultiKeyStatusList     map[int]int           `json:"multi_key_status_list"`               // key状态列表，key index -> status
 	MultiKeyDisabledReason map[int]string        `json:"multi_key_disabled_reason,omitempty"` // key禁用原因列表，key index -> reason
 	MultiKeyDisabledTime   map[int]int64         `json:"multi_key_disabled_time,omitempty"`   // key禁用时间列表，key index -> time
+	MultiKeyCooldownUntil  map[int]int64         `json:"multi_key_cooldown_until,omitempty"`  // key临时禁用冷却到期时间，key index -> unix timestamp
+	MultiKeyLimitPatterns  []LimitPattern        `json:"multi_key_limit_patterns,omitempty"`  // 多Key限流匹配模式列表
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
 }
@@ -196,6 +205,31 @@ func (channel *Channel) GetKeys() []string {
 	return keys
 }
 
+// isKeySelectable reports whether the key at idx may be selected now.
+// A TempDisabled key whose cooldown has expired is re-enabled in place:
+// both its status and cooldown entries are cleared (mutations are safe because
+// callers hold GetChannelPollingLock).
+func (channel *Channel) isKeySelectable(idx int, now int64) bool {
+	statusList := channel.ChannelInfo.MultiKeyStatusList
+	status := common.ChannelStatusEnabled
+	if statusList != nil {
+		if s, ok := statusList[idx]; ok {
+			status = s
+		}
+	}
+	if status == common.ChannelStatusEnabled {
+		return true
+	}
+	if status == common.ChannelStatusTempDisabled {
+		if now >= channel.ChannelInfo.MultiKeyCooldownUntil[idx] {
+			delete(channel.ChannelInfo.MultiKeyStatusList, idx)
+			delete(channel.ChannelInfo.MultiKeyCooldownUntil, idx)
+			return true
+		}
+	}
+	return false
+}
+
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
@@ -213,25 +247,18 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	lock.Lock()
 	defer lock.Unlock()
 
-	statusList := channel.ChannelInfo.MultiKeyStatusList
-	// helper to get key status, default to enabled when missing
-	getStatus := func(idx int) int {
-		if statusList == nil {
-			return common.ChannelStatusEnabled
-		}
-		if status, ok := statusList[idx]; ok {
-			return status
-		}
-		return common.ChannelStatusEnabled
-	}
-
-	// Collect indexes of enabled keys
+	// Collect indexes of selectable keys. isKeySelectable re-enables keys whose
+	// temp-disabled cooldown has expired, mutating the status/cooldown maps; track
+	// whether any cleanup occurred so non-polling modes can persist it.
+	now := common.GetTimestamp()
+	cooldownBefore := len(channel.ChannelInfo.MultiKeyCooldownUntil)
 	enabledIdx := make([]int, 0, len(keys))
 	for i := range keys {
-		if getStatus(i) == common.ChannelStatusEnabled {
+		if channel.isKeySelectable(i, now) {
 			enabledIdx = append(enabledIdx, i)
 		}
 	}
+	cleanedUp := len(channel.ChannelInfo.MultiKeyCooldownUntil) != cooldownBefore
 	// If no specific status list or none enabled, return an explicit error so caller can
 	// properly handle a channel with no available keys (e.g. mark channel disabled).
 	// Returning the first key here caused requests to keep using an already-disabled key.
@@ -243,6 +270,10 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	case constant.MultiKeyModeRandom:
 		// Randomly pick one enabled key
 		selectedIdx := enabledIdx[rand.Intn(len(enabledIdx))]
+		// random mode has no deferred save, so persist any cooldown cleanup
+		if cleanedUp {
+			_ = channel.SaveChannelInfo()
+		}
 		return keys[selectedIdx], selectedIdx, nil
 	case constant.MultiKeyModePolling:
 		// Use channel-specific lock to ensure thread-safe polling
@@ -261,14 +292,14 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 				// CacheUpdateChannel(channel)
 			}
 		}()
-		// Start from the saved polling index and look for the next enabled key
+		// Start from the saved polling index and look for the next selectable key
 		start := channelInfo.MultiKeyPollingIndex
 		if start < 0 || start >= len(keys) {
 			start = 0
 		}
 		for i := 0; i < len(keys); i++ {
 			idx := (start + i) % len(keys)
-			if getStatus(idx) == common.ChannelStatusEnabled {
+			if channel.isKeySelectable(idx, now) {
 				// update polling index for next call (point to the next position)
 				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
 				return keys[idx], idx, nil
@@ -561,6 +592,13 @@ func (channel *Channel) Update() error {
 				}
 			}
 		}
+		if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+			for idx := range channel.ChannelInfo.MultiKeyCooldownUntil {
+				if idx >= channel.ChannelInfo.MultiKeySize {
+					delete(channel.ChannelInfo.MultiKeyCooldownUntil, idx)
+				}
+			}
+		}
 	}
 	var err error
 	err = DB.Model(channel).Updates(channel).Error
@@ -638,7 +676,7 @@ func CleanupChannelPollingLocks() {
 	})
 }
 
-func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason string) {
+func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason string, cooldownUntil *int64) {
 	keys := channel.GetKeys()
 	if len(keys) == 0 {
 		channel.Status = status
@@ -678,7 +716,16 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 			channel.ChannelInfo.MultiKeyDisabledReason[keyIndex] = reason
 			channel.ChannelInfo.MultiKeyDisabledTime[keyIndex] = common.GetTimestamp()
 		}
-		if !hasEnabledMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) {
+		if status == common.ChannelStatusTempDisabled && cooldownUntil != nil {
+			if channel.ChannelInfo.MultiKeyCooldownUntil == nil {
+				channel.ChannelInfo.MultiKeyCooldownUntil = make(map[int]int64)
+			}
+			channel.ChannelInfo.MultiKeyCooldownUntil[keyIndex] = *cooldownUntil
+		}
+		if status == common.ChannelStatusEnabled && channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+			delete(channel.ChannelInfo.MultiKeyCooldownUntil, keyIndex)
+		}
+		if !hasEnabledMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) && !hasCoolingMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) {
 			channel.Status = common.ChannelStatusAutoDisabled
 			info := channel.GetOtherInfo()
 			info["status_reason"] = "All keys are disabled"
@@ -703,7 +750,28 @@ func hasEnabledMultiKey(keys []string, statusList map[int]int) bool {
 	return false
 }
 
+// hasCoolingMultiKey reports whether any key is temporarily disabled (cooling down)
+// and may recover when its cooldown expires. Such keys keep the channel selectable
+// so the distributor keeps reaching GetNextEnabledKey, which lazily re-enables
+// expired cooldowns instead of hard-disabling the whole channel.
+func hasCoolingMultiKey(keys []string, statusList map[int]int) bool {
+	for i := range keys {
+		if s, ok := statusList[i]; ok && s == common.ChannelStatusTempDisabled {
+			return true
+		}
+	}
+	return false
+}
+
 func UpdateChannelStatus(channelId int, usingKey string, status int, reason string) bool {
+	return updateChannelStatusWithCooldown(channelId, usingKey, status, reason, nil)
+}
+
+func UpdateChannelKeyLimitStatus(channelId int, usingKey string, cooldownUntil int64, reason string) bool {
+	return updateChannelStatusWithCooldown(channelId, usingKey, common.ChannelStatusTempDisabled, reason, &cooldownUntil)
+}
+
+func updateChannelStatusWithCooldown(channelId int, usingKey string, status int, reason string, cooldownUntil *int64) bool {
 	if common.MemoryCacheEnabled {
 		channelStatusLock.Lock()
 		defer channelStatusLock.Unlock()
@@ -718,7 +786,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			pollingLock := GetChannelPollingLock(channelId)
 			pollingLock.Lock()
 			// 如果是多Key模式，更新缓存中的状态
-			handlerMultiKeyUpdate(channelCache, usingKey, status, reason)
+			handlerMultiKeyUpdate(channelCache, usingKey, status, reason, cooldownUntil)
 			pollingLock.Unlock()
 			if beforeStatus != channelCache.Status {
 				CacheUpdateChannelStatus(channelId, channelCache.Status)
@@ -756,7 +824,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			// Protect map writes with the same per-channel lock used by readers
 			pollingLock := GetChannelPollingLock(channelId)
 			pollingLock.Lock()
-			handlerMultiKeyUpdate(channel, usingKey, status, reason)
+			handlerMultiKeyUpdate(channel, usingKey, status, reason, cooldownUntil)
 			pollingLock.Unlock()
 			if beforeStatus != channel.Status {
 				shouldUpdateAbilities = true

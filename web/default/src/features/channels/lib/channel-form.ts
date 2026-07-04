@@ -23,7 +23,7 @@ import {
   ERROR_MESSAGES,
   MODEL_FETCHABLE_TYPES,
 } from '../constants'
-import type { Channel } from '../types'
+import type { Channel, LimitPattern } from '../types'
 import {
   CHANNEL_TYPE_ADVANCED_CUSTOM,
   advancedCustomConfigUsesRelativeUpstreamPath,
@@ -182,6 +182,20 @@ export const channelFormSchema = z
     // Multi-key options (not sent to backend directly)
     multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
     multi_key_type: z.enum(['random', 'polling']).optional(),
+    // ponytail: inline schema (not reusing limitPatternSchema) because its
+    // `.default(10)` on default_minutes splits zod input/output types and
+    // breaks the form's zodResolver typing. The editor always sets
+    // default_minutes, so requiring it here is safe.
+    multi_key_limit_patterns: z
+      .array(
+        z.object({
+          name: z.string().min(1),
+          regex: z.string().min(1),
+          date_layout: z.string().min(1),
+          default_minutes: z.number().int().min(1),
+        })
+      )
+      .optional(),
     batch_add_set_key_prefix_2_name: z.boolean().optional(),
     key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
     // Channel extra settings (stored in setting JSON, not sent directly)
@@ -322,6 +336,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   other: '',
   multi_key_mode: 'single',
   multi_key_type: 'random',
+  multi_key_limit_patterns: [],
   batch_add_set_key_prefix_2_name: false,
   key_mode: 'append',
   // Channel extra settings
@@ -463,6 +478,8 @@ export function transformChannelToFormDefaults(
     other: channel.other || '',
     multi_key_mode: 'single',
     multi_key_type: channel.channel_info.multi_key_mode || 'random',
+    multi_key_limit_patterns:
+      channel.channel_info.multi_key_limit_patterns ?? [],
     batch_add_set_key_prefix_2_name: false,
     key_mode: 'append', // Default to append mode for editing multi-key channels
     // Channel extra settings
@@ -637,6 +654,7 @@ function normalizeBaseUrl(value: string | undefined): string {
 export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   mode: 'single' | 'batch' | 'multi_to_single'
   multi_key_mode?: 'random' | 'polling'
+  multi_key_limit_patterns?: LimitPattern[]
   batch_add_set_key_prefix_2_name?: boolean
   channel: Partial<Channel>
 } {
@@ -677,6 +695,8 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     mode,
     multi_key_mode:
       mode === 'multi_to_single' ? formData.multi_key_type : undefined,
+    multi_key_limit_patterns:
+      mode === 'multi_to_single' ? (formData.multi_key_limit_patterns ?? []) : undefined,
     batch_add_set_key_prefix_2_name:
       mode === 'batch' ? formData.batch_add_set_key_prefix_2_name : undefined,
     channel,
@@ -735,6 +755,10 @@ export function transformFormDataToUpdatePayload(
   payload.status_code_mapping = formData.status_code_mapping || ''
   payload.param_override = formData.param_override || ''
   payload.header_override = formData.header_override || ''
+
+  if (formData.multi_key_limit_patterns) {
+    ;(payload as Record<string, unknown>).multi_key_limit_patterns = formData.multi_key_limit_patterns
+  }
 
   return payload
 }

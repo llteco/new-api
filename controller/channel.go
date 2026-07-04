@@ -558,6 +558,7 @@ func RefreshCodexChannelCredential(c *gin.Context) {
 type AddChannelRequest struct {
 	Mode                      string                `json:"mode"`
 	MultiKeyMode              constant.MultiKeyMode `json:"multi_key_mode"`
+	MultiKeyLimitPatterns     *[]model.LimitPattern `json:"multi_key_limit_patterns"`
 	BatchAddSetKeyPrefix2Name bool                  `json:"batch_add_set_key_prefix_2_name"`
 	Channel                   *model.Channel        `json:"channel"`
 }
@@ -617,6 +618,9 @@ func AddChannel(c *gin.Context) {
 	case "multi_to_single":
 		addChannelRequest.Channel.ChannelInfo.IsMultiKey = true
 		addChannelRequest.Channel.ChannelInfo.MultiKeyMode = addChannelRequest.MultiKeyMode
+		if addChannelRequest.MultiKeyLimitPatterns != nil {
+			addChannelRequest.Channel.ChannelInfo.MultiKeyLimitPatterns = *addChannelRequest.MultiKeyLimitPatterns
+		}
 		if addChannelRequest.Channel.Type == constant.ChannelTypeVertexAi && addChannelRequest.Channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
 			array, err := getVertexArrayKeys(addChannelRequest.Channel.Key)
 			if err != nil {
@@ -899,8 +903,9 @@ func DeleteChannelBatch(c *gin.Context) {
 
 type PatchChannel struct {
 	model.Channel
-	MultiKeyMode *string `json:"multi_key_mode"`
-	KeyMode      *string `json:"key_mode"` // 多key模式下密钥覆盖或者追加
+	MultiKeyMode          *string               `json:"multi_key_mode"`
+	MultiKeyLimitPatterns *[]model.LimitPattern `json:"multi_key_limit_patterns"`
+	KeyMode               *string               `json:"key_mode"` // 多key模式下密钥覆盖或者追加
 }
 
 type ChannelStatusRequest struct {
@@ -964,6 +969,10 @@ func UpdateChannel(c *gin.Context) {
 	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
 	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
 		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(*channel.MultiKeyMode)
+	}
+
+	if channel.MultiKeyLimitPatterns != nil {
+		channel.ChannelInfo.MultiKeyLimitPatterns = *channel.MultiKeyLimitPatterns
 	}
 
 	// 处理多key模式下的密钥追加/覆盖逻辑
@@ -1422,14 +1431,16 @@ type MultiKeyStatusResponse struct {
 	EnabledCount        int `json:"enabled_count"`
 	ManualDisabledCount int `json:"manual_disabled_count"`
 	AutoDisabledCount   int `json:"auto_disabled_count"`
+	TempDisabledCount   int `json:"temp_disabled_count"`
 }
 
 type KeyStatus struct {
-	Index        int    `json:"index"`
-	Status       int    `json:"status"` // 1: enabled, 2: disabled
-	DisabledTime int64  `json:"disabled_time,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	KeyPreview   string `json:"key_preview"` // first 10 chars of key for identification
+	Index         int    `json:"index"`
+	Status        int    `json:"status"` // 1: enabled, 2: disabled
+	DisabledTime  int64  `json:"disabled_time,omitempty"`
+	CooldownUntil int64  `json:"cooldown_until,omitempty"` // unix seconds; set when Status == ChannelStatusTempDisabled
+	Reason        string `json:"reason,omitempty"`
+	KeyPreview    string `json:"key_preview"` // first 10 chars of key for identification
 }
 
 // ManageMultiKeys handles multi-key management operations
@@ -1492,13 +1503,14 @@ func ManageMultiKeys(c *gin.Context) {
 		}
 
 		// Statistics for all keys (unchanged by filtering)
-		var enabledCount, manualDisabledCount, autoDisabledCount int
+		var enabledCount, manualDisabledCount, autoDisabledCount, tempDisabledCount int
 
 		// Build all key status data first
 		var allKeyStatusList []KeyStatus
 		for i, key := range keys {
 			status := 1 // default enabled
 			var disabledTime int64
+			var cooldownUntil int64
 			var reason string
 
 			if channel.ChannelInfo.MultiKeyStatusList != nil {
@@ -1515,6 +1527,8 @@ func ManageMultiKeys(c *gin.Context) {
 				manualDisabledCount++
 			case 3:
 				autoDisabledCount++
+			case common.ChannelStatusTempDisabled:
+				tempDisabledCount++
 			}
 
 			if status != 1 {
@@ -1525,6 +1539,9 @@ func ManageMultiKeys(c *gin.Context) {
 					reason = channel.ChannelInfo.MultiKeyDisabledReason[i]
 				}
 			}
+			if status == common.ChannelStatusTempDisabled && channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+				cooldownUntil = channel.ChannelInfo.MultiKeyCooldownUntil[i]
+			}
 
 			// Create key preview (first 10 chars)
 			keyPreview := key
@@ -1533,11 +1550,12 @@ func ManageMultiKeys(c *gin.Context) {
 			}
 
 			allKeyStatusList = append(allKeyStatusList, KeyStatus{
-				Index:        i,
-				Status:       status,
-				DisabledTime: disabledTime,
-				Reason:       reason,
-				KeyPreview:   keyPreview,
+				Index:         i,
+				Status:        status,
+				DisabledTime:  disabledTime,
+				CooldownUntil: cooldownUntil,
+				Reason:        reason,
+				KeyPreview:    keyPreview,
 			})
 		}
 
@@ -1588,6 +1606,7 @@ func ManageMultiKeys(c *gin.Context) {
 				EnabledCount:        enabledCount,        // Overall statistics
 				ManualDisabledCount: manualDisabledCount, // Overall statistics
 				AutoDisabledCount:   autoDisabledCount,   // Overall statistics
+				TempDisabledCount:   tempDisabledCount,   // Overall statistics
 			},
 		})
 		return
@@ -1663,6 +1682,9 @@ func ManageMultiKeys(c *gin.Context) {
 		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
 			delete(channel.ChannelInfo.MultiKeyDisabledReason, keyIndex)
 		}
+		if channel.ChannelInfo.MultiKeyCooldownUntil != nil {
+			delete(channel.ChannelInfo.MultiKeyCooldownUntil, keyIndex)
+		}
 
 		err = channel.Update()
 		if err != nil {
@@ -1687,6 +1709,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
 		channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
 		channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+		channel.ChannelInfo.MultiKeyCooldownUntil = make(map[int]int64)
 
 		err = channel.Update()
 		if err != nil {
@@ -2168,3 +2191,4 @@ func OllamaVersion(c *gin.Context) {
 		},
 	})
 }
+

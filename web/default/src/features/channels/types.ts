@@ -22,12 +22,23 @@ import { z } from 'zod'
 // Channel Schema & Types
 // ============================================================================
 
+export const limitPatternSchema = z.object({
+  name: z.string().min(1),
+  regex: z.string().min(1),
+  date_layout: z.string().min(1),
+  default_minutes: z.number().int().min(1).default(10),
+})
+
+export type LimitPattern = z.infer<typeof limitPatternSchema>
+
 export const channelInfoSchema = z.object({
   is_multi_key: z.boolean().default(false),
   multi_key_size: z.number().default(0),
   multi_key_status_list: z.record(z.string(), z.number()).optional(),
   multi_key_disabled_reason: z.record(z.string(), z.string()).optional(),
   multi_key_disabled_time: z.record(z.string(), z.number()).optional(),
+  multi_key_cooldown_until: z.record(z.string(), z.number()).optional(),
+  multi_key_limit_patterns: z.array(limitPatternSchema).optional(),
   multi_key_polling_index: z.number().default(0),
   multi_key_mode: z.enum(['random', 'polling']).default('random'),
 })
@@ -215,8 +226,9 @@ export interface CopyChannelResponse {
 
 export interface KeyStatus {
   index: number
-  status: number // 1: enabled, 2: manual disabled, 3: auto disabled
+  status: number // 1: enabled, 2: manual disabled, 3: auto disabled, 4: temp disabled (cooldown)
   disabled_time?: number
+  cooldown_until?: number // unix seconds; present when status === 4
   reason?: string
   key_preview?: string
 }
@@ -244,6 +256,7 @@ export interface MultiKeyStatusResponse {
     enabled_count: number
     manual_disabled_count: number
     auto_disabled_count: number
+    temp_disabled_count: number
   }
 }
 
