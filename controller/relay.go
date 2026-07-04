@@ -357,28 +357,19 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
 	// Try to detect a per-key limit/cooldown first.
-	if channelError.IsMultiKey {
-		channel, getErr := model.GetChannelById(channelError.ChannelId, true)
-		if getErr != nil {
-			common.SysLog(fmt.Sprintf("[limit-debug] channel #%d: GetChannelById failed: %v", channelError.ChannelId, getErr))
-		} else if channel == nil {
-			common.SysLog(fmt.Sprintf("[limit-debug] channel #%d: GetChannelById returned nil", channelError.ChannelId))
-		} else {
-			patternCount := len(channel.ChannelInfo.MultiKeyLimitPatterns)
-			common.SysLog(fmt.Sprintf("[limit-debug] channel #%d: IsMultiKey=true, patterns=%d, usingKey=%q, err.Error()=%q", channelError.ChannelId, patternCount, channelError.UsingKey, common.LocalLogPreview(err.Error())))
-			if patternCount > 0 {
-				matched, cooldownUntil, reason := service.DetectKeyLimit(channel.ChannelInfo, err.Error())
-				common.SysLog(fmt.Sprintf("[limit-debug] channel #%d: DetectKeyLimit matched=%v cooldownUntil=%d reason=%q", channelError.ChannelId, matched, cooldownUntil, reason))
-				if matched {
-					ok := model.UpdateChannelKeyLimitStatus(channelError.ChannelId, channelError.UsingKey, cooldownUntil, reason)
-					common.SysLog(fmt.Sprintf("[limit-debug] channel #%d: UpdateChannelKeyLimitStatus ok=%v", channelError.ChannelId, ok))
-					logger.LogError(c, fmt.Sprintf("channel #%d key %q temp disabled: %s", channelError.ChannelId, channelError.UsingKey, reason))
-					return
-				}
-			}
+	// NOTE: do not gate on channelError.IsMultiKey — on the first relay attempt the
+	// channel object is a synthetic stub (getChannel returns one before InitChannelMeta
+	// runs), so ChannelInfo.IsMultiKey is the zero value even for real multi-key
+	// channels. Always look the real channel up from the DB; if it has no limit
+	// patterns the DetectKeyLimit call is a cheap no-op.
+	channel, getErr := model.GetChannelById(channelError.ChannelId, true)
+	if getErr == nil && channel != nil && len(channel.ChannelInfo.MultiKeyLimitPatterns) > 0 {
+		matched, cooldownUntil, reason := service.DetectKeyLimit(channel.ChannelInfo, err.Error())
+		if matched {
+			model.UpdateChannelKeyLimitStatus(channelError.ChannelId, channelError.UsingKey, cooldownUntil, reason)
+			logger.LogError(c, fmt.Sprintf("channel #%d key %q temp disabled: %s", channelError.ChannelId, channelError.UsingKey, reason))
+			return
 		}
-	} else {
-		common.SysLog(fmt.Sprintf("[limit-debug] channel #%d: IsMultiKey=false, skipping limit detection", channelError.ChannelId))
 	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
