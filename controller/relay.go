@@ -362,18 +362,19 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	// runs), so ChannelInfo.IsMultiKey is the zero value even for real multi-key
 	// channels. Always look the real channel up from the DB; if it has no limit
 	// patterns the DetectKeyLimit call is a cheap no-op.
+	keyLimitMatched := false
 	channel, getErr := model.GetChannelById(channelError.ChannelId, true)
 	if getErr == nil && channel != nil && len(channel.ChannelInfo.MultiKeyLimitPatterns) > 0 {
 		matched, cooldownUntil, reason := service.DetectKeyLimit(channel.ChannelInfo, err.Error())
 		if matched {
 			model.UpdateChannelKeyLimitStatus(channelError.ChannelId, channelError.UsingKey, cooldownUntil, reason)
 			logger.LogError(c, fmt.Sprintf("channel #%d key %q temp disabled: %s", channelError.ChannelId, channelError.UsingKey, reason))
-			return
+			keyLimitMatched = true
 		}
 	}
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.ShouldDisableChannel(err) && channelError.AutoBan {
+	if !keyLimitMatched && service.ShouldDisableChannel(err) && channelError.AutoBan {
 		gopool.Go(func() {
 			service.DisableChannel(channelError, err.ErrorWithStatusCode())
 		})
