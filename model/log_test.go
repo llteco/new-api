@@ -76,6 +76,7 @@ func TestAppendRequestHeadersSkipsEmptyAndSensitive(t *testing.T) {
 }
 
 func TestRecordConsumeLogUsesExplicitTokenUsedForQuotaData(t *testing.T) {
+	truncateTables(t)
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -116,6 +117,7 @@ func TestRecordConsumeLogUsesExplicitTokenUsedForQuotaData(t *testing.T) {
 }
 
 func TestRecordConsumeLogFallsBackTokenUsedToPromptPlusCompletion(t *testing.T) {
+	truncateTables(t)
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

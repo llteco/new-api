@@ -93,10 +93,10 @@ func TestEffectiveTotalTokensExprIncludesCompletion(t *testing.T) {
 
 func TestSumTokensByDimensionIncludesAnthropicCacheInPromptTokens(t *testing.T) {
 	require.NotNil(t, LOG_DB, "LOG_DB must be initialized by TestMain")
+	truncateTables(t)
 
 	now := time.Now().Unix()
 	baseLog := Log{
-		UserId:           1,
 		Username:         "user1",
 		CreatedAt:        now,
 		Type:             LogTypeConsume,
