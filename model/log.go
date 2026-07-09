@@ -428,6 +428,12 @@ type RecordConsumeLogParams struct {
 	ChannelId        int                    `json:"channel_id"`
 	PromptTokens     int                    `json:"prompt_tokens"`
 	CompletionTokens int                    `json:"completion_tokens"`
+	// TokenUsed overrides PromptTokens+CompletionTokens when writing to
+	// quota_data (model call analysis / flow stats). Leave it at 0 to fall
+	// back to the default sum. This lets Anthropic-format requests keep the
+	// original PromptTokens in logs while reporting total input tokens to
+	// aggregated dashboards.
+	TokenUsed        int                    `json:"token_used"`
 	ModelName        string                 `json:"model_name"`
 	TokenName        string                 `json:"token_name"`
 	Quota            int                    `json:"quota"`
@@ -487,6 +493,10 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+	tokenUsed := params.TokenUsed
+	if tokenUsed <= 0 {
+		tokenUsed = params.PromptTokens + params.CompletionTokens
+	}
 	if common.DataExportEnabled {
 		LogQuotaData(QuotaDataLogParams{
 			UserID:    userId,
@@ -494,7 +504,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			ModelName: params.ModelName,
 			Quota:     params.Quota,
 			CreatedAt: createdAt,
-			TokenUsed: params.PromptTokens + params.CompletionTokens,
+			TokenUsed: tokenUsed,
 			UseGroup:  params.Group,
 			TokenID:   params.TokenId,
 			ChannelID: params.ChannelId,

@@ -490,3 +490,100 @@ func TestTryTieredSettleNoClampInRange(t *testing.T) {
 	require.NotNil(t, result)
 	require.Nil(t, relayInfo.QuotaClamp, "in-range settlement must not record a clamp")
 }
+
+func TestCalculateTextQuotaSummaryLogPromptTokensIncludesClaudeCache(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	usage := &dto.Usage{
+		PromptTokens:     1000,
+		CompletionTokens: 200,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         100,
+			CachedCreationTokens: 50,
+		},
+		ClaudeCacheCreation5mTokens: 10,
+		ClaudeCacheCreation1hTokens: 20,
+	}
+
+	priceData := types.PriceData{
+		ModelRatio:           1,
+		CompletionRatio:      2,
+		CacheRatio:           0.1,
+		CacheCreationRatio:   1.25,
+		CacheCreation5mRatio: 1.25,
+		CacheCreation1hRatio: 2,
+		GroupRatioInfo: types.GroupRatioInfo{
+			GroupRatio: 1,
+		},
+	}
+
+	claudeRelayInfo := &relaycommon.RelayInfo{
+		RelayFormat:             types.RelayFormatClaude,
+		FinalRequestRelayFormat: types.RelayFormatClaude,
+		OriginModelName:         "claude-3-7-sonnet",
+		PriceData:               priceData,
+		StartTime:               time.Now(),
+	}
+	openAIRelayInfo := &relaycommon.RelayInfo{
+		RelayFormat:             types.RelayFormatOpenAI,
+		FinalRequestRelayFormat: types.RelayFormatOpenAI,
+		OriginModelName:         "gpt-4o",
+		PriceData:               priceData,
+		StartTime:               time.Now(),
+	}
+
+	claudeSummary := calculateTextQuotaSummary(ctx, claudeRelayInfo, usage)
+	openAISummary := calculateTextQuotaSummary(ctx, openAIRelayInfo, usage)
+
+	// Claude-native input_tokens exclude cache read/creation; the logged prompt
+	// tokens must add them back so dashboard aggregation reflects total input.
+	require.True(t, claudeSummary.IsClaudeUsageSemantic)
+	require.Equal(t, 1000, claudeSummary.PromptTokens)
+	require.Equal(t, 1000+100+50, claudeSummary.LogPromptTokens)
+
+	// OpenAI-style prompt_tokens already represent total input.
+	require.False(t, openAISummary.IsClaudeUsageSemantic)
+	require.Equal(t, 1000, openAISummary.PromptTokens)
+	require.Equal(t, 1000, openAISummary.LogPromptTokens)
+}
+
+func TestCalculateTextQuotaSummaryLogPromptTokensRecoversOpenRouterClaudeTotalInput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "openai/gpt-4.1",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeOpenRouter,
+		},
+		FinalRequestRelayFormat: types.RelayFormatClaude,
+		PriceData: types.PriceData{
+			ModelRatio:         1,
+			CompletionRatio:    1,
+			CacheRatio:         0.1,
+			CacheCreationRatio: 1.25,
+			GroupRatioInfo:     types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+
+	usage := &dto.Usage{
+		PromptTokens:     2604,
+		CompletionTokens: 383,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:         2432,
+			CachedCreationTokens: 100,
+		},
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	// Billing subtracts cache from PromptTokens, but the logged value must
+	// restore the original total input reported by the upstream.
+	require.True(t, summary.IsClaudeUsageSemantic)
+	require.Equal(t, 2604-2432-100, summary.PromptTokens)
+	require.Equal(t, 2604, summary.LogPromptTokens)
+}

@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -119,9 +120,9 @@ func SumTokensByDimension(dimension TokenStatDimension, filter TokenStatFilter, 
 	base := LOG_DB.Table("logs").
 		Select(strings.Join([]string{
 			column + " AS name",
-			"COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens",
+			"COALESCE(SUM(" + effectivePromptTokensExpr() + "), 0) AS prompt_tokens",
 			"COALESCE(SUM(completion_tokens), 0) AS completion_tokens",
-			"COALESCE(SUM(prompt_tokens), 0) + COALESCE(SUM(completion_tokens), 0) AS total_tokens",
+			"COALESCE(SUM(" + effectiveTotalTokensExpr() + "), 0) AS total_tokens",
 			"COUNT(*) AS count",
 			"COALESCE(SUM(quota), 0) AS quota",
 		}, ", ")).
@@ -188,7 +189,7 @@ func SumTokensTimeseries(dimension TokenStatDimension, granularity TokenStatGran
 	selectColumns := strings.Join([]string{
 		tsSelect + " AS timestamp",
 		column + " AS name",
-		"COALESCE(SUM(prompt_tokens), 0) + COALESCE(SUM(completion_tokens), 0) AS tokens",
+		"COALESCE(SUM(" + effectiveTotalTokensExpr() + "), 0) AS tokens",
 	}, ", ")
 
 	tx := LOG_DB.Table("logs").
@@ -279,4 +280,78 @@ func alignTimestampToBucket(ts int64, bucketSeconds int64) int64 {
 		return ts
 	}
 	return ts - (ts % bucketSeconds)
+}
+
+// jsonExtractIntExpr returns a database-specific SQL expression that extracts
+// an integer JSON field from the given column. The expression evaluates to 0
+// when the key is absent or not a number, so callers can use it directly in
+// arithmetic without extra COALESCE wrapping.
+func jsonExtractIntExpr(column, path string) string {
+	switch {
+	case common.UsingLogDatabase(common.DatabaseTypeMySQL):
+		return fmt.Sprintf("COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(%s, '$.%s')) AS SIGNED), 0)", column, path)
+	case common.UsingLogDatabase(common.DatabaseTypePostgreSQL):
+		return fmt.Sprintf("CASE WHEN jsonb_typeof(%s::jsonb->'%s') = 'number' THEN (%s::jsonb->>'%s')::int ELSE 0 END", column, path, column, path)
+	case common.UsingLogDatabase(common.DatabaseTypeClickHouse):
+		return fmt.Sprintf("JSONExtractInt(%s, '%s')", column, path)
+	default: // SQLite
+		return fmt.Sprintf("COALESCE(CAST(json_extract(%s, '$.%s') AS INTEGER), 0)", column, path)
+	}
+}
+
+// isAnthropicExpr returns a SQL predicate that is true when the log row
+// represents an Anthropic/Claude-native request. It checks both the newer
+// usage_semantic marker and the legacy claude flag so historical logs are
+// handled correctly.
+func isAnthropicExpr(column string) string {
+	switch {
+	case common.UsingLogDatabase(common.DatabaseTypeMySQL):
+		return fmt.Sprintf("(JSON_UNQUOTE(JSON_EXTRACT(%s, '$.usage_semantic')) = 'anthropic' OR JSON_EXTRACT(%s, '$.claude') = true)", column, column)
+	case common.UsingLogDatabase(common.DatabaseTypePostgreSQL):
+		return fmt.Sprintf("((jsonb_typeof(%s::jsonb->'usage_semantic') = 'string' AND %s::jsonb->>'usage_semantic' = 'anthropic') OR (jsonb_typeof(%s::jsonb->'claude') = 'boolean' AND (%s::jsonb->>'claude')::boolean = true))", column, column, column, column)
+	case common.UsingLogDatabase(common.DatabaseTypeClickHouse):
+		return fmt.Sprintf("(JSONExtractString(%s, 'usage_semantic') = 'anthropic' OR JSONExtractBool(%s, 'claude') = true)", column, column)
+	default: // SQLite
+		return fmt.Sprintf("(json_extract(%s, '$.usage_semantic') = 'anthropic' OR json_extract(%s, '$.claude') = 1)", column, column)
+	}
+}
+
+// cacheCreationTotalExpr returns a SQL expression that computes the total
+// cache-creation tokens for a Claude usage, matching the logic used when the
+// log was written: prefer the aggregate value when it covers the split values,
+// otherwise use the sum of the split values.
+func cacheCreationTotalExpr(aggregate, split5m, split1h string) string {
+	switch {
+	case common.UsingLogDatabase(common.DatabaseTypeSQLite):
+		return fmt.Sprintf("MAX(%s, %s + %s)", aggregate, split5m, split1h)
+	case common.UsingLogDatabase(common.DatabaseTypeClickHouse):
+		return fmt.Sprintf("greatest(%s, %s + %s)", aggregate, split5m, split1h)
+	default:
+		return fmt.Sprintf("GREATEST(%s, %s + %s)", aggregate, split5m, split1h)
+	}
+}
+
+// anthropicCacheTokensExpr returns the cache-read plus cache-creation tokens
+// that need to be added to prompt_tokens for Anthropic-native requests so the
+// dashboard total matches OpenAI-style "total input tokens" semantics.
+func anthropicCacheTokensExpr(column string) string {
+	cacheTokens := jsonExtractIntExpr(column, "cache_tokens")
+	cacheCreationTokens := jsonExtractIntExpr(column, "cache_creation_tokens")
+	cacheCreationTokens5m := jsonExtractIntExpr(column, "cache_creation_tokens_5m")
+	cacheCreationTokens1h := jsonExtractIntExpr(column, "cache_creation_tokens_1h")
+	return fmt.Sprintf("%s + %s", cacheTokens, cacheCreationTotalExpr(cacheCreationTokens, cacheCreationTokens5m, cacheCreationTokens1h))
+}
+
+// effectivePromptTokensExpr returns a SQL expression that yields the total
+// input tokens for a log row. For Anthropic-native rows it adds cache read and
+// cache creation tokens to prompt_tokens; for OpenAI-compatible rows
+// prompt_tokens already contains all input tokens.
+func effectivePromptTokensExpr() string {
+	return fmt.Sprintf("(prompt_tokens + CASE WHEN %s THEN %s ELSE 0 END)", isAnthropicExpr("logs.other"), anthropicCacheTokensExpr("logs.other"))
+}
+
+// effectiveTotalTokensExpr returns a SQL expression that yields the total
+// tokens (input + completion) for a log row, using effective input tokens.
+func effectiveTotalTokensExpr() string {
+	return fmt.Sprintf("(%s + completion_tokens)", effectivePromptTokensExpr())
 }
