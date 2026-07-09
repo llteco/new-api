@@ -214,6 +214,7 @@ export function addTimeToDate(
  * advances.
  */
 export type NaturalRangeKind =
+  | 'today'
   | 'thisMonth'
   | 'lastMonth'
   | 'thisYear'
@@ -230,6 +231,8 @@ export function getNaturalDateRange(
 ): { start: Date; end: Date } {
   const d = dayjs(fromDate)
   switch (kind) {
+    case 'today':
+      return { start: d.startOf('day').toDate(), end: d.endOf('day').toDate() }
     case 'thisMonth':
       return { start: d.startOf('month').toDate(), end: d.endOf('month').toDate() }
     case 'lastMonth': {

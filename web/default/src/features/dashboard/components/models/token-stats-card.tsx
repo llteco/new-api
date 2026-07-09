@@ -35,6 +35,7 @@ import type {
   TokenStatDimension,
   TokenStatGranularity,
 } from '@/features/dashboard/types'
+import { toIntlLocale } from '@/i18n/languages'
 
 let themeManagerPromise: Promise<
   (typeof import('@visactor/vchart'))['ThemeManager']
@@ -137,7 +138,7 @@ export function TokenStatsCard(props: TokenStatsCardProps) {
     return summarizeTokenTotal(response.items)
   }, [response])
 
-  const locale = i18n.resolvedLanguage || i18n.language
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const stats = [
     {
       key: 'total',

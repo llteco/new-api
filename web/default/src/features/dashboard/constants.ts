@@ -31,15 +31,15 @@ export const MAX_CHART_TREND_POINTS = 7
 export const DEFAULT_DASHBOARD_CHART_PREFERENCES: DashboardChartPreferences = {
   consumptionDistributionChart: 'bar',
   modelAnalyticsChart: 'trend',
-  defaultTimeRangeDays: '1d',
+  defaultTimeRangeDays: 'today',
   defaultTimeGranularity: DEFAULT_TIME_GRANULARITY,
 }
 
 export const TIME_RANGE_BY_GRANULARITY: Record<TimeGranularity, TimeRangePresetKey> =
   {
-    hour: '1d',
+    hour: 'today',
     day: '7d',
-    week: '29d',
+    week: 'thisMonth',
   } as const
 
 export const TIME_GRANULARITY_OPTIONS = [
@@ -55,10 +55,9 @@ export const TIME_GRANULARITY_OPTIONS = [
 // preferences; it is independent of the human-readable label so
 // translations can change without breaking saved state.
 export type TimeRangePresetKey =
-  | '1d'
+  | 'today'
   | '7d'
   | '14d'
-  | '29d'
   | 'thisMonth'
   | 'lastMonth'
   | 'thisYear'
@@ -82,10 +81,9 @@ export interface NaturalTimeRangePreset {
 export type TimeRangePreset = RollingTimeRangePreset | NaturalTimeRangePreset
 
 export const TIME_RANGE_PRESETS: readonly TimeRangePreset[] = [
-  { kind: 'rolling', key: '1d', label: '1 Day', days: 1 },
+  { kind: 'natural', key: 'today', label: 'Today', range: 'today' },
   { kind: 'rolling', key: '7d', label: '7 Days', days: 7 },
   { kind: 'rolling', key: '14d', label: '14 Days', days: 14 },
-  { kind: 'rolling', key: '29d', label: '29 Days', days: 29 },
   { kind: 'natural', key: 'thisMonth', label: 'This Month', range: 'thisMonth' },
   { kind: 'natural', key: 'lastMonth', label: 'Last Month', range: 'lastMonth' },
   { kind: 'natural', key: 'thisYear', label: 'This Year', range: 'thisYear' },

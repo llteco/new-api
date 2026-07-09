@@ -72,12 +72,11 @@ interface ModelsFilterProps {
 // instead of leaving the granularity on its previous value (e.g. hourly).
 function granularityForPresetKey(key: TimeRangePresetKey): TimeGranularity {
   switch (key) {
-    case '1d':
+    case 'today':
       return 'hour'
     case '7d':
     case '14d':
       return 'day'
-    case '29d':
     case 'thisMonth':
     case 'lastMonth':
     case 'thisYear':
