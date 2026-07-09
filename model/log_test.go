@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,4 +73,83 @@ func TestAppendRequestHeadersSkipsEmptyAndSensitive(t *testing.T) {
 	appendRequestHeaders(c, other)
 
 	assert.Nil(t, other["admin_info"])
+}
+
+func TestRecordConsumeLogUsesExplicitTokenUsedForQuotaData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("username", "alice")
+
+	CacheQuotaDataLock.Lock()
+	originalCache := CacheQuotaData
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+	t.Cleanup(func() {
+		CacheQuotaDataLock.Lock()
+		CacheQuotaData = originalCache
+		CacheQuotaDataLock.Unlock()
+	})
+
+	originalDataExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() {
+		common.DataExportEnabled = originalDataExport
+	})
+
+	RecordConsumeLog(c, 1, RecordConsumeLogParams{
+		PromptTokens:     100,
+		CompletionTokens: 20,
+		TokenUsed:        250,
+		ModelName:        "claude-test",
+		Quota:            1,
+		Group:            "default",
+		TokenId:          1,
+	})
+
+	CacheQuotaDataLock.Lock()
+	defer CacheQuotaDataLock.Unlock()
+	require.Len(t, CacheQuotaData, 1)
+	for _, qd := range CacheQuotaData {
+		assert.Equal(t, 250, qd.TokenUsed)
+	}
+}
+
+func TestRecordConsumeLogFallsBackTokenUsedToPromptPlusCompletion(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("username", "bob")
+
+	CacheQuotaDataLock.Lock()
+	originalCache := CacheQuotaData
+	CacheQuotaData = make(map[string]*QuotaData)
+	CacheQuotaDataLock.Unlock()
+	t.Cleanup(func() {
+		CacheQuotaDataLock.Lock()
+		CacheQuotaData = originalCache
+		CacheQuotaDataLock.Unlock()
+	})
+
+	originalDataExport := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() {
+		common.DataExportEnabled = originalDataExport
+	})
+
+	RecordConsumeLog(c, 2, RecordConsumeLogParams{
+		PromptTokens:     100,
+		CompletionTokens: 20,
+		ModelName:        "gpt-test",
+		Quota:            1,
+		Group:            "default",
+		TokenId:          2,
+	})
+
+	CacheQuotaDataLock.Lock()
+	defer CacheQuotaDataLock.Unlock()
+	require.Len(t, CacheQuotaData, 1)
+	for _, qd := range CacheQuotaData {
+		assert.Equal(t, 120, qd.TokenUsed)
+	}
 }
