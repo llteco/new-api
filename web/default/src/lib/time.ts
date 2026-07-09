@@ -232,7 +232,7 @@ export function getNaturalDateRange(
   const d = dayjs(fromDate)
   switch (kind) {
     case 'today':
-      return { start: d.startOf('day').toDate(), end: new Date() }
+      return { start: d.startOf('day').toDate(), end: d.endOf('day').toDate() }
     case 'thisMonth':
       return { start: d.startOf('month').toDate(), end: d.endOf('month').toDate() }
     case 'lastMonth': {
