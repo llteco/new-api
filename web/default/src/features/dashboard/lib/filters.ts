@@ -157,6 +157,8 @@ export function getPresetRollingDays(key: TimeRangePresetKey): number {
   // roughly matches the period so the legacy helper has a finite
   // default if no custom start/end is supplied.
   switch (preset.range) {
+    case 'today':
+      return 1
     case 'thisMonth':
     case 'lastMonth':
       return 30
@@ -174,8 +176,8 @@ export function getPresetByKey(key: TimeRangePresetKey): TimeRangePreset {
     return preset
   }
   // Should not happen if the caller passes a valid key; fall back to
-  // the first preset (always a rolling 1-day window) so we never
-  // return undefined and the UI keeps rendering.
+  // the first preset ("today") so we never return undefined and the
+  // UI keeps rendering.
   return TIME_RANGE_PRESETS[0]
 }
 
