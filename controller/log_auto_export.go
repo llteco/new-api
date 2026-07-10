@@ -156,22 +156,19 @@ func buildLogExportData(logs []*model.Log) logAutoExportData {
 
 		promptTokens := int64(log.PromptTokens)
 		completionTokens := int64(log.CompletionTokens)
-		cacheTokens := int64(0)
+		cacheReadTokens := int64(0)
+		cacheCreationTokens := int64(0)
 
-		// Extract cache_tokens from Other field
+		// Anthropic-native logs store cache read and cache creation tokens in
+		// other; these need to be added to the input total. OpenAI-compatible
+		// logs already include cache hits in prompt_tokens.
 		var typeLabel string
 		if log.Other != "" {
 			otherMap, _ := common.StrToMap(log.Other)
 			if otherMap != nil {
-				if v, ok := otherMap["cache_tokens"]; ok {
-					switch val := v.(type) {
-					case float64:
-						cacheTokens = int64(val)
-					case int:
-						cacheTokens = int64(val)
-					case int64:
-						cacheTokens = val
-					}
+				if isAnthropicLog(otherMap) {
+					cacheReadTokens = int64Value(otherMap, "cache_tokens")
+					cacheCreationTokens = cacheCreationTotalFromLog(otherMap)
 				}
 				if conv, ok := otherMap["request_conversion"]; ok {
 					if convArr, ok := conv.([]interface{}); ok && len(convArr) > 0 {
@@ -189,7 +186,9 @@ func buildLogExportData(logs []*model.Log) logAutoExportData {
 			}
 		}
 
-		totalTokens := promptTokens + completionTokens
+		cacheTokens := cacheReadTokens + cacheCreationTokens
+		effectivePromptTokens := promptTokens + cacheTokens
+		totalTokens := effectivePromptTokens + completionTokens
 		data.Tokens += totalTokens
 
 		// Users aggregation
@@ -226,4 +225,71 @@ func buildLogExportData(logs []*model.Log) logAutoExportData {
 	}
 
 	return data
+}
+
+// isAnthropicLog returns true when the log row represents an Anthropic/Claude-
+// native request. It checks both the newer usage_semantic marker and the legacy
+// claude flag so historical logs are handled correctly.
+func isAnthropicLog(other map[string]interface{}) bool {
+	if us, ok := other["usage_semantic"].(string); ok && us == "anthropic" {
+		return true
+	}
+	if c, ok := other["claude"].(bool); ok && c {
+		return true
+	}
+	return false
+}
+
+// cacheCreationTotalFromLog returns the total cache-creation tokens for a
+// Claude usage, matching the logic used when the log was written: prefer the
+// aggregate value when it covers the split values, otherwise use the sum of
+// the split values.
+func cacheCreationTotalFromLog(other map[string]interface{}) int64 {
+	aggregate := int64Value(other, "cache_creation_tokens")
+	split5m := int64Value(other, "cache_creation_tokens_5m")
+	split1h := int64Value(other, "cache_creation_tokens_1h")
+	if split5m > 0 || split1h > 0 {
+		splitTotal := split5m + split1h
+		if aggregate > splitTotal {
+			return aggregate
+		}
+		return splitTotal
+	}
+	return aggregate
+}
+
+// int64Value extracts an integer value from a JSON-decoded map. It returns 0
+// for missing or non-numeric values.
+func int64Value(m map[string]interface{}, key string) int64 {
+	v, ok := m[key]
+	if !ok {
+		return 0
+	}
+	switch n := v.(type) {
+	case int:
+		return int64(n)
+	case int8:
+		return int64(n)
+	case int16:
+		return int64(n)
+	case int32:
+		return int64(n)
+	case int64:
+		return n
+	case uint:
+		return int64(n)
+	case uint8:
+		return int64(n)
+	case uint16:
+		return int64(n)
+	case uint32:
+		return int64(n)
+	case uint64:
+		return int64(n)
+	case float32:
+		return int64(n)
+	case float64:
+		return int64(n)
+	}
+	return 0
 }
