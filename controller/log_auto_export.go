@@ -76,14 +76,27 @@ func isWeeklyLogExportDue() bool {
 	return true
 }
 
-// logAutoExportData matches the requested JSON output structure.
+// logAutoExportData matches the requested JSON output structure. Details holds
+// one record per consume log row in the export window with no aggregation, so
+// the exported numbers cannot drift from the raw logs. All token fields are
+// normalized across the three log kinds (openai-native, anthropic-native,
+// api-converted): prompt excludes cache, cache holds the cached portion
+// (read + creation), so prompt + cache is the record's total input. The
+// tokens/users sums use the dashboard-aligned effective input, which equals
+// prompt + cache + completion summed over the records.
 type logAutoExportData struct {
-	Tokens  int64                                             `json:"tokens"`
-	Users   map[string]map[string]int64                       `json:"users"`
-	Details map[string]map[string]map[string]logHourDetail `json:"details"`
+	Tokens  int64                       `json:"tokens"`
+	Users   map[string]map[string]int64 `json:"users"`
+	Details []logExportRecord           `json:"details"`
 }
 
-type logHourDetail struct {
+// logExportRecord is a single consume log row in the export window. Types
+// carries the request conversion chain when the request was converted between
+// API formats.
+type logExportRecord struct {
+	Username   string   `json:"username"`
+	Model      string   `json:"model"`
+	Time       string   `json:"time"`
 	Prompt     int64    `json:"prompt"`
 	Completion int64    `json:"completion"`
 	Cache      int64    `json:"cache"`
@@ -137,7 +150,7 @@ func buildLogExportData(logs []*model.Log) logAutoExportData {
 	data := logAutoExportData{
 		Tokens:  0,
 		Users:   make(map[string]map[string]int64),
-		Details: make(map[string]map[string]map[string]logHourDetail),
+		Details: make([]logExportRecord, 0, len(logs)),
 	}
 
 	for _, log := range logs {
@@ -158,18 +171,23 @@ func buildLogExportData(logs []*model.Log) logAutoExportData {
 		completionTokens := int64(log.CompletionTokens)
 		cacheReadTokens := int64(0)
 		cacheCreationTokens := int64(0)
+		anthropicSemantic := false
 
-		// Anthropic-native logs store cache read and cache creation tokens in
-		// other; these need to be added to the input total. OpenAI-compatible
-		// logs already include cache hits in prompt_tokens.
+		// Normalize all three log kinds (openai-native, anthropic-native,
+		// api-converted) to one split: prompt holds only non-cached input
+		// tokens, cache holds the cached portion (read + creation).
+		// Anthropic-native and converted-to-anthropic logs store cache
+		// separately from prompt_tokens, so the split is already normalized.
+		// OpenAI-native and converted-to-openai logs include the cache in
+		// prompt_tokens, so the cached portion is subtracted back out for the
+		// exported record.
 		var typeLabel string
 		if log.Other != "" {
 			otherMap, _ := common.StrToMap(log.Other)
 			if otherMap != nil {
-				if isAnthropicLog(otherMap) {
-					cacheReadTokens = int64Value(otherMap, "cache_tokens")
-					cacheCreationTokens = cacheCreationTotalFromLog(otherMap)
-				}
+				anthropicSemantic = isAnthropicLog(otherMap)
+				cacheReadTokens = int64Value(otherMap, "cache_tokens")
+				cacheCreationTokens = cacheCreationTotalFromLog(otherMap)
 				if conv, ok := otherMap["request_conversion"]; ok {
 					if convArr, ok := conv.([]interface{}); ok && len(convArr) > 0 {
 						parts := make([]string, 0, len(convArr))
@@ -187,7 +205,13 @@ func buildLogExportData(logs []*model.Log) logAutoExportData {
 		}
 
 		cacheTokens := cacheReadTokens + cacheCreationTokens
-		effectivePromptTokens := promptTokens + cacheTokens
+		// effectivePromptTokens is the dashboard-aligned total input used for
+		// the tokens/users sums: anthropic-semantic rows add the separately
+		// stored cache, openai-semantic rows already carry it in prompt_tokens.
+		effectivePromptTokens := promptTokens
+		if anthropicSemantic {
+			effectivePromptTokens += cacheTokens
+		}
 		totalTokens := effectivePromptTokens + completionTokens
 		data.Tokens += totalTokens
 
@@ -197,39 +221,38 @@ func buildLogExportData(logs []*model.Log) logAutoExportData {
 		}
 		data.Users[username][modelName] += totalTokens
 
-		// Details aggregation by hour
-		hourKey := time.Unix(log.CreatedAt, 0).UTC().Format("2006-01-02T15:00:00Z")
-		if data.Details[username] == nil {
-			data.Details[username] = make(map[string]map[string]logHourDetail)
+		// recordPrompt excludes the cached portion for every log kind so all
+		// exported records share one prompt/cache meaning.
+		recordPrompt := promptTokens
+		if !anthropicSemantic {
+			recordPrompt -= cacheTokens
+			if recordPrompt < 0 {
+				recordPrompt = 0
+			}
 		}
-		if data.Details[username][hourKey] == nil {
-			data.Details[username][hourKey] = make(map[string]logHourDetail)
+
+		record := logExportRecord{
+			Username:   username,
+			Model:      modelName,
+			Time:       time.Unix(log.CreatedAt, 0).UTC().Format(time.RFC3339),
+			Prompt:     recordPrompt,
+			Completion: completionTokens,
+			Cache:      cacheTokens,
 		}
-		detail := data.Details[username][hourKey][modelName]
-		detail.Prompt += promptTokens
-		detail.Completion += completionTokens
-		detail.Cache += cacheTokens
 		if typeLabel != "" {
-			found := false
-			for _, t := range detail.Types {
-				if t == typeLabel {
-					found = true
-					break
-				}
-			}
-			if !found {
-				detail.Types = append(detail.Types, typeLabel)
-			}
+			record.Types = []string{typeLabel}
 		}
-		data.Details[username][hourKey][modelName] = detail
+		data.Details = append(data.Details, record)
 	}
 
 	return data
 }
 
-// isAnthropicLog returns true when the log row represents an Anthropic/Claude-
-// native request. It checks both the newer usage_semantic marker and the legacy
-// claude flag so historical logs are handled correctly.
+// isAnthropicLog returns true when the log row stores usage in Anthropic
+// semantics (prompt_tokens excludes cache): anthropic-native requests and
+// requests converted to an anthropic upstream. It checks both the newer
+// usage_semantic marker and the legacy claude flag so historical logs are
+// handled correctly.
 func isAnthropicLog(other map[string]interface{}) bool {
 	if us, ok := other["usage_semantic"].(string); ok && us == "anthropic" {
 		return true
@@ -240,10 +263,11 @@ func isAnthropicLog(other map[string]interface{}) bool {
 	return false
 }
 
-// cacheCreationTotalFromLog returns the total cache-creation tokens for a
-// Claude usage, matching the logic used when the log was written: prefer the
+// cacheCreationTotalFromLog returns the total cache-creation tokens recorded
+// in a log row, matching the logic used when the log was written: prefer the
 // aggregate value when it covers the split values, otherwise use the sum of
-// the split values.
+// the split values. The 5m/1h split fields only exist on anthropic-semantic
+// rows; other rows simply yield their aggregate (usually zero).
 func cacheCreationTotalFromLog(other map[string]interface{}) int64 {
 	aggregate := int64Value(other, "cache_creation_tokens")
 	split5m := int64Value(other, "cache_creation_tokens_5m")
