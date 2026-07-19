@@ -198,6 +198,7 @@ func GetLogsForExport(startTimestamp, endTimestamp int64) ([]*Log, error) {
 	err := LOG_DB.
 		Where("type = ?", LogTypeConsume).
 		Where("created_at >= ? AND created_at < ?", startTimestamp, endTimestamp).
+		Order("created_at asc, id asc").
 		Find(&logs).Error
 	if err != nil {
 		return nil, err
