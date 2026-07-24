@@ -3,6 +3,9 @@ package model
 import (
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCalcNextTokenResetTime(t *testing.T) {
@@ -117,4 +120,47 @@ func TestResetLoopPeriods(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMaybeResetTokenQuota_ChannelMode(t *testing.T) {
+	truncateTables(t)
+	tok := &Token{
+		UserId: 1, Key: "sk-reset-chan", Status: 1,
+		ChannelQuotaMode: true,
+		ResetPeriod:      TokenResetMonthly,
+		NextResetTime:    time.Now().Add(-1 * time.Hour).Unix(),
+	}
+	require.NoError(t, tok.Insert())
+	require.NoError(t, UpsertTokenChannelQuota(tok.Id, 10, 5000))
+	require.NoError(t, UpsertTokenChannelQuota(tok.Id, 20, 8000))
+	require.NoError(t, DecreaseTokenChannelQuota(tok.Id, 10, 2000))
+	require.NoError(t, DecreaseTokenChannelQuota(tok.Id, 20, 3000))
+
+	require.True(t, MaybeResetTokenQuota(tok))
+
+	r10, _ := GetTokenChannelQuota(tok.Id, 10)
+	r20, _ := GetTokenChannelQuota(tok.Id, 20)
+	assert.Equal(t, 5000, r10.RemainQuota)
+	assert.Equal(t, 0, r10.UsedQuota)
+	assert.Equal(t, 8000, r20.RemainQuota)
+	assert.Equal(t, 0, r20.UsedQuota)
+	assert.Greater(t, tok.NextResetTime, time.Now().Unix())
+}
+
+func TestMaybeResetTokenQuota_ChannelMode_NotYetTime(t *testing.T) {
+	truncateTables(t)
+	tok := &Token{
+		UserId: 1, Key: "sk-reset-chan-future", Status: 1,
+		ChannelQuotaMode: true,
+		ResetPeriod:      TokenResetMonthly,
+		NextResetTime:    time.Now().Add(1 * time.Hour).Unix(),
+	}
+	require.NoError(t, tok.Insert())
+	require.NoError(t, UpsertTokenChannelQuota(tok.Id, 10, 5000))
+	require.NoError(t, DecreaseTokenChannelQuota(tok.Id, 10, 2000))
+
+	require.False(t, MaybeResetTokenQuota(tok))
+	r10, _ := GetTokenChannelQuota(tok.Id, 10)
+	assert.Equal(t, 3000, r10.RemainQuota)
+	assert.Equal(t, 2000, r10.UsedQuota)
 }

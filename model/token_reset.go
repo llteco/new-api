@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"gorm.io/gorm"
 )
 
 const (
@@ -62,6 +63,10 @@ func MaybeResetTokenQuota(token *Token) bool {
 		return false
 	}
 
+	if token.ChannelQuotaMode {
+		return maybeResetTokenChannelQuotas(token, period, now)
+	}
+
 	var fresh Token
 	if err := DB.Where("id = ?", token.Id).First(&fresh).Error; err != nil {
 		return false
@@ -107,5 +112,50 @@ func MaybeResetTokenQuota(token *Token) bool {
 	token.ResetQuota = fresh.ResetQuota
 	token.ResetPeriod = fresh.ResetPeriod
 
+	return true
+}
+
+func maybeResetTokenChannelQuotas(token *Token, period string, now int64) bool {
+	var fresh Token
+	if err := DB.Where("id = ?", token.Id).First(&fresh).Error; err != nil {
+		return false
+	}
+	if fresh.NextResetTime <= 0 || fresh.NextResetTime > now {
+		token.NextResetTime = fresh.NextResetTime
+		return false
+	}
+
+	resetCount := 0
+	base := time.Unix(fresh.NextResetTime, 0)
+	for fresh.NextResetTime > 0 && fresh.NextResetTime <= now {
+		next := CalcNextTokenResetTime(base, period)
+		if next <= 0 || next == fresh.NextResetTime {
+			break
+		}
+		fresh.NextResetTime = next
+		base = time.Unix(next, 0)
+		resetCount++
+	}
+	if resetCount == 0 {
+		return false
+	}
+
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&TokenChannelQuota{}).
+			Where("token_id = ?", fresh.Id).
+			Updates(map[string]interface{}{
+				"remain_quota": gorm.Expr("reset_quota"),
+				"used_quota":   0,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Token{}).Where("id = ?", fresh.Id).
+			Update("next_reset_time", fresh.NextResetTime).Error
+	}); err != nil {
+		return false
+	}
+
+	_ = cacheDeleteToken(token.Key)
+	token.NextResetTime = fresh.NextResetTime
 	return true
 }
