@@ -11,8 +11,8 @@ type ChatLog struct {
 	ChannelId    int    `json:"channel_id" gorm:"index"`
 	ModelName    string `json:"model_name" gorm:"type:varchar(128);index"`
 	RequestId    string `json:"request_id" gorm:"type:varchar(64);index"`
-	RequestBody  string `json:"request_body" gorm:"type:longtext"`
-	ResponseBody string `json:"response_body" gorm:"type:longtext"`
+	RequestBody  string `json:"request_body" gorm:"type:text"`
+	ResponseBody string `json:"response_body" gorm:"type:text"`
 	IsStream     bool   `json:"is_stream"`
 	Truncated    bool   `json:"truncated"`
 	StatusCode   int    `json:"status_code" gorm:"default:0"`

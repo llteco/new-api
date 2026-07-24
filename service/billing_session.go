@@ -193,9 +193,13 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	if err := s.reserveFunding(delta); err != nil {
 		return err
 	}
-	if err := s.reserveToken(delta); err != nil {
+	hit, err := s.reserveToken(delta)
+	if err != nil {
 		s.rollbackFundingReserve(delta)
 		return err
+	}
+	if s.channelQuotaMode {
+		s.channelHit = s.channelHit || hit
 	}
 
 	s.preConsumedQuota += delta
@@ -324,21 +328,21 @@ func (s *BillingSession) rollbackFundingReserve(delta int) {
 	}
 }
 
-func (s *BillingSession) reserveToken(delta int) error {
+func (s *BillingSession) reserveToken(delta int) (bool, error) {
 	if delta <= 0 || s.relayInfo.IsPlayground {
-		return nil
+		return false, nil
 	}
 	if s.channelQuotaMode {
-		_, err := PreConsumeTokenQuotaChannel(s.relayInfo, delta)
+		hit, err := PreConsumeTokenQuotaChannel(s.relayInfo, delta)
 		if err != nil {
-			return types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			return false, types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
-		return nil
+		return hit, nil
 	}
 	if err := PreConsumeTokenQuota(s.relayInfo, delta); err != nil {
-		return types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		return false, types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 	}
-	return nil
+	return false, nil
 }
 
 // shouldTrust 统一信任额度检查，适用于钱包和订阅。

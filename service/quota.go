@@ -22,6 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 type TokenDetails struct {
@@ -424,7 +425,10 @@ func PreConsumeTokenQuotaChannel(relayInfo *relaycommon.RelayInfo, quota int) (h
 	}
 	row, rowErr := model.GetTokenChannelQuota(relayInfo.TokenId, relayInfo.ChannelId)
 	if rowErr != nil {
-		return false, nil
+		if errors.Is(rowErr, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, rowErr
 	}
 	if row.RemainQuota < quota {
 		return true, fmt.Errorf("分渠道额度不足, 渠道 %d 剩余: %s, 需要: %s",
