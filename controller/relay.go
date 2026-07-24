@@ -123,6 +123,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	var chatLogRecorder *service.ChatLogRecorder
+	if tok, terr := model.GetTokenByKey(relayInfo.TokenKey, false); terr == nil && tok.ChatLogEnabled {
+		chatLogRecorder = service.MaybeInstallChatLogCapture(c, true)
+	}
+
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
@@ -210,6 +215,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		if chatLogRecorder != nil {
+			if bs, berr := bodyStorage.Bytes(); berr == nil && len(bs) > 0 {
+				chatLogRecorder.SetRequestBody(bs)
+			}
+		}
+
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
 			newAPIError = relay.WssHelper(c, relayInfo)
@@ -223,6 +234,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
+			if chatLogRecorder != nil {
+				chatLogRecorder.Persist(c)
+			}
 			return
 		}
 
