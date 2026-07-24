@@ -408,6 +408,34 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 	return nil
 }
 
+func PreConsumeTokenQuotaChannel(relayInfo *relaycommon.RelayInfo, quota int) (hit bool, err error) {
+	if quota < 0 {
+		return false, errors.New("quota 不能为负数！")
+	}
+	if relayInfo.IsPlayground {
+		return false, nil
+	}
+	token, err := model.GetTokenByKey(relayInfo.TokenKey, false)
+	if err != nil {
+		return false, err
+	}
+	if !token.ChannelQuotaMode {
+		return false, PreConsumeTokenQuota(relayInfo, quota)
+	}
+	row, rowErr := model.GetTokenChannelQuota(relayInfo.TokenId, relayInfo.ChannelId)
+	if rowErr != nil {
+		return false, nil
+	}
+	if row.RemainQuota < quota {
+		return true, fmt.Errorf("分渠道额度不足, 渠道 %d 剩余: %s, 需要: %s",
+			relayInfo.ChannelId, logger.FormatQuota(row.RemainQuota), logger.FormatQuota(quota))
+	}
+	if err := model.DecreaseTokenChannelQuota(relayInfo.TokenId, relayInfo.ChannelId, quota); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
 func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (err error) {
 
 	// 1) Consume from wallet quota OR subscription item
