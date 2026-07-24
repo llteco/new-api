@@ -61,7 +61,7 @@ func TestPreConsumeTokenQuota_TotalMode_Delegates(t *testing.T) {
 	tok := &model.Token{
 		UserId: 1, Key: "sk-pc-total", Status: 1,
 		ChannelQuotaMode: false,
-		RemainQuota: 1000, UnlimitedQuota: false,
+		RemainQuota:      1000, UnlimitedQuota: false,
 	}
 	require.NoError(t, tok.Insert())
 	info := &relaycommon.RelayInfo{TokenId: tok.Id, TokenKey: tok.Key, ChannelMeta: &relaycommon.ChannelMeta{ChannelId: 42}}
