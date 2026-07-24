@@ -32,6 +32,7 @@ type Token struct {
 	Group              string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	ChannelQuotaMode   bool           `json:"channel_quota_mode"`
+	ChatLogEnabled     bool           `json:"chat_log_enabled"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
@@ -307,6 +308,7 @@ func (token *Token) Update() (err error) {
 	}()
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "channel_quota_mode",
+		"chat_log_enabled",
 		"reset_period", "reset_quota", "next_reset_time").Updates(token).Error
 	return err
 }

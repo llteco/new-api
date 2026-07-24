@@ -329,6 +329,12 @@ func InitResources() error {
 		return err
 	}
 
+	err = model.InitChatLogDB()
+	if err != nil {
+		common.FatalLog("failed to initialize chat-log database: " + err.Error())
+		return err
+	}
+
 	// Initialize Redis
 	err = common.InitRedisClient()
 	if err != nil {
