@@ -72,9 +72,16 @@ import { Textarea } from '@/components/ui/textarea'
 import { useStatus } from '@/hooks/use-status'
 import { getUserModels, getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 
-import { createApiKey, updateApiKey, getApiKey } from '../api'
+import {
+  createApiKey,
+  updateApiKey,
+  getApiKey,
+  getTokenChannelQuotas,
+  updateTokenChannelQuotas,
+} from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   getApiKeyFormSchema,
@@ -88,6 +95,7 @@ import {
   ApiKeyGroupCombobox,
   type ApiKeyGroupOption,
 } from './api-key-group-combobox'
+import { ChannelQuotaEditor } from './channel-quota-editor'
 import { useApiKeys } from './api-keys-provider'
 
 type ApiKeyMutateDrawerProps = {
@@ -158,6 +166,28 @@ export function ApiKeysMutateDrawer({
     }
   }, [open, isUpdate, currentRow, form, defaultUseAutoGroup, backendHasAuto])
 
+  // Fetch existing per-channel quotas when updating
+  const { data: channelQuotasData } = useQuery({
+    queryKey: ['token-channel-quotas', currentRow?.id],
+    queryFn: () => getTokenChannelQuotas(currentRow?.id as number),
+    enabled: open && isUpdate && !!currentRow,
+    staleTime: 0,
+  })
+
+  // Seed channel_quotas form field once data arrives
+  useEffect(() => {
+    if (!isUpdate || !channelQuotasData?.success || !channelQuotasData.data) {
+      return
+    }
+    form.setValue(
+      'channel_quotas',
+      channelQuotasData.data.map((item) => ({
+        channel_id: item.channel_id,
+        reset_quota: item.reset_quota,
+      }))
+    )
+  }, [isUpdate, channelQuotasData, form])
+
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
     if (groups.length === 0) return
@@ -185,6 +215,21 @@ export function ApiKeysMutateDrawer({
           id: currentRow.id,
         })
         if (result.success) {
+          if (data.channel_quota_mode) {
+            try {
+              const cqResult = await updateTokenChannelQuotas(
+                currentRow.id,
+                data.channel_quotas ?? []
+              )
+              if (!cqResult.success) {
+                toast.error(
+                  cqResult.message || t(ERROR_MESSAGES.UPDATE_FAILED)
+                )
+              }
+            } catch (error) {
+              handleServerError(error)
+            }
+          }
           toast.success(t(SUCCESS_MESSAGES.API_KEY_UPDATED))
           onOpenChange(false)
           triggerRefresh()
@@ -256,6 +301,8 @@ export function ApiKeysMutateDrawer({
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
   const selectedGroup = form.watch('group')
   const unlimitedQuota = form.watch('unlimited_quota')
+  const channelQuotaMode = form.watch('channel_quota_mode')
+  const showQuotaFields = !channelQuotaMode && !unlimitedQuota
 
   return (
     <Sheet
@@ -447,7 +494,7 @@ export function ApiKeysMutateDrawer({
                 description={t('Set quota amount and limits')}
                 icon={<WalletCards className='size-4' />}
               />
-              {!unlimitedQuota && (
+              {showQuotaFields && (
                 <FormField
                   control={form.control}
                   name='remain_quota_dollars'
@@ -477,7 +524,7 @@ export function ApiKeysMutateDrawer({
                   )}
                 />
               )}
-              {!unlimitedQuota && (
+              {(showQuotaFields || channelQuotaMode) && (
                 <FormField
                   control={form.control}
                   name='reset_period'
@@ -510,28 +557,82 @@ export function ApiKeysMutateDrawer({
                 />
               )}
 
+              {!channelQuotaMode && (
+                <FormField
+                  control={form.control}
+                  name='unlimited_quota'
+                  render={({ field }) => (
+                    <FormItem className={sideDrawerSwitchItemClassName()}>
+                      <div className='flex flex-col gap-0.5'>
+                        <FormLabel className='text-sm'>
+                          {t('Unlimited Quota')}
+                        </FormLabel>
+                        <FormDescription className='text-xs'>
+                          {t('Enable unlimited quota for this API key')}
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              )}
+
               <FormField
                 control={form.control}
-                name='unlimited_quota'
+                name='channel_quota_mode'
                 render={({ field }) => (
                   <FormItem className={sideDrawerSwitchItemClassName()}>
                     <div className='flex flex-col gap-0.5'>
                       <FormLabel className='text-sm'>
-                        {t('Unlimited Quota')}
+                        {t('Per-channel quota mode')}
                       </FormLabel>
-                      <FormDescription className='text-xs'>
-                        {t('Enable unlimited quota for this API key')}
+                      <FormDescription className='line-clamp-2 text-xs sm:line-clamp-none'>
+                        {t(
+                          'When enabled, the token uses per-channel quotas instead of a total quota. Requests to unconfigured channels are not limited.'
+                        )}
                       </FormDescription>
                     </div>
                     <FormControl>
                       <Switch
-                        checked={field.value}
+                        checked={!!field.value}
                         onCheckedChange={field.onChange}
                       />
                     </FormControl>
                   </FormItem>
                 )}
               />
+
+              {channelQuotaMode &&
+                (isUpdate ? (
+                  <FormField
+                    control={form.control}
+                    name='channel_quotas'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Channel quota configuration')}</FormLabel>
+                        <FormControl>
+                          <ChannelQuotaEditor
+                            value={field.value}
+                            onChange={field.onChange}
+                            disabled={isSubmitting}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : (
+                  <FormDescription>
+                    {t(
+                      'Save the key first, then configure per-channel quotas'
+                    )}
+                  </FormDescription>
+                ))}
             </SideDrawerSection>
 
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
