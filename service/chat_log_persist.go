@@ -54,6 +54,7 @@ func (r *ChatLogRecorder) Persist(c *gin.Context) {
 
 	cw := r.cw
 	requestBody := r.requestBody
+	statusCode := cw.ResponseWriter.Status()
 	gopool.Go(func() {
 		respBody, truncated := cw.capturedBytes()
 		useTime := 0
@@ -65,7 +66,7 @@ func (r *ChatLogRecorder) Persist(c *gin.Context) {
 			ModelName: modelName, RequestId: requestId,
 			RequestBody: requestBody, ResponseBody: respBody,
 			IsStream: isStream, Truncated: truncated,
-			StatusCode: cw.ResponseWriter.Status(),
+			StatusCode: statusCode,
 			UseTime:    useTime,
 		}
 		if err := cl.Insert(); err != nil {
