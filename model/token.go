@@ -31,7 +31,7 @@ type Token struct {
 	NextResetTime      int64          `json:"next_reset_time" gorm:"bigint;default:0"`
 	Group              string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
-	ChannelQuotaMode   bool           `json:"channel_quota_mode" gorm:"default:0"`
+	ChannelQuotaMode   bool           `json:"channel_quota_mode"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
