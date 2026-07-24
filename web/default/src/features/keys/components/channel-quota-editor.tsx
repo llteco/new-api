@@ -91,7 +91,11 @@ export function ChannelQuotaEditor(props: ChannelQuotaEditorProps) {
 
   return (
     <div className='flex flex-col gap-3'>
-      {rows.map((row, index) => (
+      {rows.map((row, index) => {
+        const usedElsewhere = rows
+          .filter((_, i) => i !== index)
+          .map((v) => v.channel_id)
+        return (
         <div
           key={rowKeys[index]}
           className='grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2'
@@ -108,7 +112,11 @@ export function ChannelQuotaEditor(props: ChannelQuotaEditorProps) {
             </SelectTrigger>
             <SelectContent>
               {channels.map((channel) => (
-                <SelectItem key={channel.id} value={String(channel.id)}>
+                <SelectItem
+                  key={channel.id}
+                  value={String(channel.id)}
+                  disabled={usedElsewhere.includes(channel.id)}
+                >
                   {channel.name}
                 </SelectItem>
               ))}
@@ -142,7 +150,8 @@ export function ChannelQuotaEditor(props: ChannelQuotaEditorProps) {
             <Trash2 className='size-4' />
           </Button>
         </div>
-      ))}
+        )
+      })}
 
       <Button
         type='button'
