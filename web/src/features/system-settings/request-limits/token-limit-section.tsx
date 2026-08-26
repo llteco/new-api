@@ -23,6 +23,13 @@ import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
 
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Form,
   FormControl,
   FormDescription,
@@ -38,9 +45,17 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 
+const TIMEZONE_OPTIONS: string[] = [
+  '',
+  ...(Intl.supportedValuesOf
+    ? Intl.supportedValuesOf('timeZone')
+    : ['UTC', 'Asia/Shanghai', 'Asia/Tokyo', 'Europe/London', 'America/New_York']),
+]
+
 const tokenLimitSchema = z.object({
   token_setting: z.object({
     max_user_tokens: z.number().min(1),
+    reset_timezone: z.string(),
   }),
 })
 
@@ -49,6 +64,7 @@ type TokenLimitFormInput = z.input<typeof tokenLimitSchema>
 
 type NormalizedTokenLimitValues = {
   'token_setting.max_user_tokens': number
+  'token_setting.reset_timezone': string
 }
 
 type TokenLimitSectionProps = {
@@ -60,6 +76,7 @@ const buildFormDefaults = (
 ): TokenLimitFormInput => ({
   token_setting: {
     max_user_tokens: defaults['token_setting.max_user_tokens'],
+    reset_timezone: defaults['token_setting.reset_timezone'] ?? '',
   },
 })
 
@@ -67,6 +84,7 @@ const normalizeFormValues = (
   values: TokenLimitFormValues
 ): NormalizedTokenLimitValues => ({
   'token_setting.max_user_tokens': values.token_setting.max_user_tokens,
+  'token_setting.reset_timezone': values.token_setting.reset_timezone,
 })
 
 export function TokenLimitSection({ defaultValues }: TokenLimitSectionProps) {
@@ -83,11 +101,13 @@ export function TokenLimitSection({ defaultValues }: TokenLimitSectionProps) {
   }, [defaultValues, form])
 
   const onSubmit = async (values: TokenLimitFormValues) => {
-    const key = 'token_setting.max_user_tokens' as const
     const normalized = normalizeFormValues(values)
-    const value = normalized[key]
-    if (value !== defaultValues[key]) {
-      await updateOption.mutateAsync({ key, value })
+    for (const key of Object.keys(normalized) as Array<
+      keyof NormalizedTokenLimitValues
+    >) {
+      if (normalized[key] !== defaultValues[key]) {
+        await updateOption.mutateAsync({ key, value: normalized[key] })
+      }
     }
   }
 
@@ -120,6 +140,43 @@ export function TokenLimitSection({ defaultValues }: TokenLimitSectionProps) {
                 <FormDescription>
                   {t(
                     'Maximum number of tokens each user can create. Default 1000. Setting too large may affect performance.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name='token_setting.reset_timezone'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Token quota reset timezone')}</FormLabel>
+                <Select
+                  value={field.value}
+                  onValueChange={(value) => field.onChange(value)}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={t('Follow system timezone')}
+                      />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent>
+                    <SelectItem value=''>
+                      {t('Follow system timezone')}
+                    </SelectItem>
+                    {TIMEZONE_OPTIONS.filter((tz) => tz !== '').map((tz) => (
+                      <SelectItem key={tz} value={tz}>
+                        {tz}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {t(
+                    'Timezone used to compute periodic quota reset boundaries (daily, weekly, monthly). Defaults to the server system timezone.'
                   )}
                 </FormDescription>
                 <FormMessage />

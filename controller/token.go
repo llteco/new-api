@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -313,12 +314,17 @@ func AddToken(c *gin.Context) {
 		common.SysLog("failed to generate token key: " + err.Error())
 		return
 	}
+	createdTime := common.GetTimestamp()
+	nextReset := int64(0)
+	if rp := model.NormalizeTokenResetPeriod(token.ResetPeriod); rp != model.TokenResetNever && !token.UnlimitedQuota {
+		nextReset = model.CalcNextTokenResetTime(time.Unix(createdTime, 0), rp)
+	}
 	cleanToken := model.Token{
 		UserId:             c.GetInt("id"),
 		Name:               token.Name,
 		Key:                key,
-		CreatedTime:        common.GetTimestamp(),
-		AccessedTime:       common.GetTimestamp(),
+		CreatedTime:        createdTime,
+		AccessedTime:       createdTime,
 		ExpiredTime:        token.ExpiredTime,
 		RemainQuota:        token.RemainQuota,
 		UnlimitedQuota:     token.UnlimitedQuota,
@@ -328,6 +334,9 @@ func AddToken(c *gin.Context) {
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
 		AutoGroups:         token.AutoGroups,
+		ResetPeriod:        token.ResetPeriod,
+		ResetQuota:         token.RemainQuota,
+		NextResetTime:      nextReset,
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -414,6 +423,13 @@ func UpdateToken(c *gin.Context) {
 			if !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
 				return
 			}
+		}
+		cleanToken.ResetPeriod = token.ResetPeriod
+		cleanToken.ResetQuota = 0
+		cleanToken.NextResetTime = 0
+		if rp := model.NormalizeTokenResetPeriod(token.ResetPeriod); rp != model.TokenResetNever && !token.UnlimitedQuota {
+			cleanToken.ResetQuota = token.RemainQuota
+			cleanToken.NextResetTime = model.CalcNextTokenResetTime(time.Unix(common.GetTimestamp(), 0), rp)
 		}
 	}
 	err = cleanToken.Update()

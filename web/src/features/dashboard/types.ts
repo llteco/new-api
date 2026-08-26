@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { TimeGranularity } from '@/lib/time'
+import type { TimeRangePresetKey } from './constants'
 
 // ============================================================================
 // Quota & Usage Data Types
@@ -165,6 +166,38 @@ export interface ProcessedFlowData {
 }
 
 // ============================================================================
+// Token Stats Types
+// ============================================================================
+
+export type TokenStatDimension = 'user' | 'model'
+
+export type TokenStatGranularity = 'hour' | 'day'
+
+export interface TokenDimensionStat {
+  name: string
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  count: number
+  quota: number
+}
+
+export interface TokenTimePoint {
+  timestamp: number
+  name: string
+  tokens: number
+}
+
+export interface TokenStatsResponse {
+  dimension: TokenStatDimension
+  granularity: TokenStatGranularity
+  top_n: number
+  total: TokenDimensionStat
+  items: TokenDimensionStat[]
+  timeseries: TokenTimePoint[][]
+}
+
+// ============================================================================
 // Uptime Monitoring Types
 // ============================================================================
 
@@ -198,7 +231,7 @@ export type ModelAnalyticsChartTab = 'trend' | 'proportion' | 'top'
 export interface DashboardChartPreferences {
   consumptionDistributionChart: ConsumptionDistributionChartType
   modelAnalyticsChart: ModelAnalyticsChartTab
-  defaultTimeRangeDays: number
+  defaultTimeRangeDays: TimeRangePresetKey
   defaultTimeGranularity: TimeGranularity
 }
 
@@ -206,7 +239,7 @@ export interface DashboardChartPreferences {
 // switching between dashboard sub-sections, matching the model/flow filters.
 export interface UserChartsFilters {
   timeGranularity: TimeGranularity
-  selectedRange: number
+  selectedRange: TimeRangePresetKey
   topUserLimit: number
 }
 

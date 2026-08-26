@@ -69,6 +69,7 @@ import {
   flowSankeyDatumValue,
   getDefaultDays,
   getFlowStages,
+  getPresetRollingDays,
 } from '@/features/dashboard/lib'
 import {
   compactFlowSelectionLabel,
@@ -314,7 +315,7 @@ export function FlowCharts(props: FlowChartsProps) {
   const timeRange = useMemo(
     () =>
       computeTimeRange(
-        getDefaultDays(props.filters?.time_granularity),
+        getPresetRollingDays(getDefaultDays(props.filters?.time_granularity)),
         props.filters?.start_timestamp,
         props.filters?.end_timestamp
       ),

@@ -85,12 +85,27 @@ export function CompactDateTimeRangePicker({
     setOpen(false)
   }
 
-  const applyPreset = (kind: 'today' | '7d' | 'week' | '30d' | 'month') => {
+  const applyPreset = (
+    kind:
+      | 'today'
+      | 'yesterday'
+      | '7d'
+      | 'week'
+      | '30d'
+      | 'month'
+      | 'lastMonth'
+      | 'year'
+      | 'lastYear'
+  ) => {
     const now = dayjs()
-    const presets = {
+    const presets: Record<string, { start: Date; end: Date }> = {
       today: {
         start: now.startOf('day').toDate(),
         end: now.endOf('day').toDate(),
+      },
+      yesterday: {
+        start: now.subtract(1, 'day').startOf('day').toDate(),
+        end: now.subtract(1, 'day').endOf('day').toDate(),
       },
       '7d': {
         start: now.subtract(6, 'day').startOf('day').toDate(),
@@ -107,6 +122,18 @@ export function CompactDateTimeRangePicker({
       month: {
         start: now.startOf('month').toDate(),
         end: now.endOf('month').toDate(),
+      },
+      lastMonth: {
+        start: now.subtract(1, 'month').startOf('month').toDate(),
+        end: now.subtract(1, 'month').endOf('month').toDate(),
+      },
+      year: {
+        start: now.startOf('year').toDate(),
+        end: now.endOf('year').toDate(),
+      },
+      lastYear: {
+        start: now.subtract(1, 'year').startOf('year').toDate(),
+        end: now.subtract(1, 'year').endOf('year').toDate(),
       },
     }
     const range = presets[kind]
@@ -182,6 +209,15 @@ export function CompactDateTimeRangePicker({
               variant='secondary'
               size='sm'
               className='h-7 flex-1 px-2 text-xs'
+              onClick={() => applyPreset('yesterday')}
+            >
+              {t('Yesterday')}
+            </Button>
+            <Button
+              type='button'
+              variant='secondary'
+              size='sm'
+              className='h-7 flex-1 px-2 text-xs'
               onClick={() => applyPreset('7d')}
             >
               {t('7 Days')}
@@ -212,6 +248,33 @@ export function CompactDateTimeRangePicker({
               onClick={() => applyPreset('month')}
             >
               {t('This month')}
+            </Button>
+            <Button
+              type='button'
+              variant='secondary'
+              size='sm'
+              className='h-7 flex-1 px-2 text-xs'
+              onClick={() => applyPreset('lastMonth')}
+            >
+              {t('Last Month')}
+            </Button>
+            <Button
+              type='button'
+              variant='secondary'
+              size='sm'
+              className='h-7 flex-1 px-2 text-xs'
+              onClick={() => applyPreset('year')}
+            >
+              {t('This Year')}
+            </Button>
+            <Button
+              type='button'
+              variant='secondary'
+              size='sm'
+              className='h-7 flex-1 px-2 text-xs'
+              onClick={() => applyPreset('lastYear')}
+            >
+              {t('Last Year')}
             </Button>
           </div>
 

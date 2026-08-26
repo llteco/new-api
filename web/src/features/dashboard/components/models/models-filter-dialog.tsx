@@ -16,12 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Filter, RotateCcw, Calendar, Search } from 'lucide-react'
 import { useState } from 'react'
+import { Filter, RotateCcw, Calendar, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-
-import { DateTimePicker } from '@/components/datetime-picker'
-import { Dialog } from '@/components/dialog'
+import { useAuthStore } from '@/stores/auth-store'
+import { type TimeGranularity } from '@/lib/time'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -34,21 +34,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { DateTimePicker } from '@/components/datetime-picker'
+import { Dialog } from '@/components/dialog'
 import {
   TIME_GRANULARITY_OPTIONS,
   TIME_RANGE_PRESETS,
+  type TimeRangePreset,
+  type TimeRangePresetKey,
 } from '@/features/dashboard/constants'
 import {
   buildDefaultDashboardFilters,
   cleanFilters,
+  getPresetDateRange,
 } from '@/features/dashboard/lib'
 import type {
   DashboardChartPreferences,
   DashboardFilters,
 } from '@/features/dashboard/types'
-import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
-import { cn } from '@/lib/utils'
-import { useAuthStore } from '@/stores/auth-store'
 
 interface ModelsFilterProps {
   preferences: DashboardChartPreferences
@@ -64,22 +66,40 @@ interface ModelsFilterProps {
 // Quick-range presets imply a sensible granularity (matching the app's
 // range<->granularity pairing), so picking "7 Days" requests daily buckets
 // instead of leaving the granularity on its previous value (e.g. hourly).
-function granularityForRangeDays(days: number): TimeGranularity {
-  if (days <= 1) return 'hour'
-  if (days >= 29) return 'week'
-  return 'day'
+function granularityForPresetKey(key: TimeRangePresetKey): TimeGranularity {
+  switch (key) {
+    case 'today':
+      return 'hour'
+    case '7d':
+    case '14d':
+      return 'day'
+    case 'thisMonth':
+    case 'lastMonth':
+    case 'thisYear':
+      return 'week'
+  }
 }
 
 // Highlights the matching quick-range button when the applied range spans an
 // exact preset; custom ranges leave every quick button unselected.
-function detectQuickRangeDays(
+function detectQuickRangeKey(
   filters: DashboardFilters | undefined
-): number | null {
+): TimeRangePresetKey | null {
   const start = filters?.start_timestamp
   const end = filters?.end_timestamp
   if (!start || !end) return null
-  const days = Math.round((end.getTime() - start.getTime()) / 86_400_000)
-  return TIME_RANGE_PRESETS.some((preset) => preset.days === days) ? days : null
+  const startMs = start.getTime()
+  const endMs = end.getTime()
+  for (const preset of TIME_RANGE_PRESETS) {
+    const range = getPresetDateRange(preset.key)
+    if (
+      range.start.getTime() === startMs &&
+      range.end.getTime() === endMs
+    ) {
+      return preset.key
+    }
+  }
+  return null
 }
 
 /**
@@ -104,12 +124,11 @@ export function ModelsFilter(props: ModelsFilterProps) {
 
   const [open, setOpen] = useState(false)
   const [filters, setFilters] = useState<DashboardFilters>(
-    () =>
-      props.currentFilters ?? buildDefaultDashboardFilters(props.preferences)
+    () => props.currentFilters ?? buildDefaultDashboardFilters(props.preferences)
   )
-  const [selectedRange, setSelectedRange] = useState<number | null>(() =>
-    detectQuickRangeDays(props.currentFilters)
-  )
+  const [selectedRangeKey, setSelectedRangeKey] = useState<
+    TimeRangePresetKey | null
+  >(() => detectQuickRangeKey(props.currentFilters))
 
   const handleOpenChange = (nextOpen: boolean) => {
     // Sync the editing state from the applied filters every time the dialog
@@ -118,7 +137,7 @@ export function ModelsFilter(props: ModelsFilterProps) {
       const applied =
         props.currentFilters ?? buildDefaultDashboardFilters(props.preferences)
       setFilters(applied)
-      setSelectedRange(detectQuickRangeDays(applied))
+      setSelectedRangeKey(detectQuickRangeKey(applied))
     }
     setOpen(nextOpen)
   }
@@ -133,14 +152,14 @@ export function ModelsFilter(props: ModelsFilterProps) {
   }
 
   const handleReset = () => {
-    const days = props.preferences.defaultTimeRangeDays
-    const { start, end } = getRollingDateRange(days)
+    const key = props.preferences.defaultTimeRangeDays
+    const { start, end } = getPresetDateRange(key)
     setFilters({
       ...buildDefaultDashboardFilters(props.preferences),
       start_timestamp: start,
       end_timestamp: end,
     })
-    setSelectedRange(days)
+    setSelectedRangeKey(key)
     props.onReset()
     setOpen(false)
   }
@@ -150,20 +169,20 @@ export function ModelsFilter(props: ModelsFilterProps) {
     value: Date | string | undefined
   ) => {
     setFilters((prev) => ({ ...prev, [field]: value }))
-    if (field === 'start_timestamp' || field === 'end_timestamp')
-      setSelectedRange(null)
+    if (field === 'start_timestamp' || field === 'end_timestamp') {
+      setSelectedRangeKey(null)
+    }
   }
 
-  const handleQuickRange = (days: number) => {
-    const { start, end } = getRollingDateRange(days)
-
+  const handleQuickRange = (preset: TimeRangePreset) => {
+    const { start, end } = getPresetDateRange(preset.key)
     setFilters((prev) => ({
       ...prev,
       start_timestamp: start,
       end_timestamp: end,
-      time_granularity: granularityForRangeDays(days),
+      time_granularity: granularityForPresetKey(preset.key),
     }))
-    setSelectedRange(days)
+    setSelectedRangeKey(preset.key)
   }
 
   return (
@@ -208,14 +227,16 @@ export function ModelsFilter(props: ModelsFilterProps) {
             <div className='grid grid-cols-2 gap-2 sm:flex'>
               {TIME_RANGE_PRESETS.map((range) => (
                 <Button
-                  key={range.days}
+                  key={range.key}
                   type='button'
                   size='sm'
-                  variant={selectedRange === range.days ? 'default' : 'outline'}
-                  onClick={() => handleQuickRange(range.days)}
+                  variant={
+                    selectedRangeKey === range.key ? 'default' : 'outline'
+                  }
+                  onClick={() => handleQuickRange(range)}
                   className={cn(
                     'flex-1',
-                    selectedRange === range.days &&
+                    selectedRangeKey === range.key &&
                       'ring-ring ring-2 ring-offset-2'
                   )}
                 >

@@ -56,6 +56,46 @@ func sanitizeClickHouseLikePattern(input string) (string, error) {
 	return input, nil
 }
 
+// sensitiveHeaderNames contains header names that must never be stored in logs.
+var sensitiveHeaderNames = map[string]struct{}{
+	"authorization":       {},
+	"cookie":              {},
+	"proxy-authorization": {},
+	"x-api-key":           {},
+	"x-goog-api-key":      {},
+	"api-key":             {},
+}
+
+// appendRequestHeaders extracts non-sensitive request headers from the Gin
+// context and stores them under other["admin_info"]["request_headers"].
+// This keeps them admin-only because formatUserLogs strips admin_info for
+// non-admin users.
+func appendRequestHeaders(c *gin.Context, other map[string]interface{}) {
+	if c == nil || c.Request == nil || len(c.Request.Header) == 0 || other == nil {
+		return
+	}
+	headers := make(map[string]string, len(c.Request.Header))
+	for key := range c.Request.Header {
+		if _, sensitive := sensitiveHeaderNames[strings.ToLower(key)]; sensitive {
+			continue
+		}
+		value := strings.TrimSpace(c.Request.Header.Get(key))
+		if value == "" {
+			continue
+		}
+		headers[key] = value
+	}
+	if len(headers) == 0 {
+		return
+	}
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	if !ok || adminInfo == nil {
+		adminInfo = make(map[string]interface{})
+		other["admin_info"] = adminInfo
+	}
+	adminInfo["request_headers"] = headers
+}
+
 type Log struct {
 	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:2;index:idx_user_id_id,priority:2"`
 	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
@@ -105,6 +145,65 @@ func createLog(log *Log) error {
 
 func clickHouseLogOrder(prefix string) string {
 	return prefix + "created_at desc, " + prefix + "request_id desc"
+}
+
+// logSortableColumns maps client-side column identifiers to the
+// physical database column used in the ORDER BY clause. The map is
+// the single source of truth for server-side sorting so arbitrary
+// user input can never reach the SQL string.
+var logSortableColumns = map[string]string{
+	"created_at":        "created_at",
+	"prompt_tokens":     "prompt_tokens",
+	"completion_tokens": "completion_tokens",
+	"quota":             "quota",
+	"use_time":          "use_time",
+	"model_name":        "model_name",
+	"username":          "username",
+	"token_name":        "token_name",
+	"channel_id":        "channel_id",
+}
+
+// resolveLogSortOrder returns a safe ORDER BY clause for the logs
+// query. sortField is the client column identifier (validated against
+// logSortableColumns); sortOrder is "asc" or "desc". Empty or invalid
+// values fall back to the default ordering.
+func resolveLogSortOrder(sortField string, sortOrder string) string {
+	column, ok := logSortableColumns[sortField]
+	if !ok || column == "" {
+		return ""
+	}
+	order := "desc"
+	if sortOrder == "asc" {
+		order = "asc"
+	}
+	return column + " " + order
+}
+
+// resolveLogOrderWithFallback builds the full ORDER BY clause for the
+// logs query. When sortField resolves to a valid column, it is used
+// with the appropriate column prefix and the secondary sort key so
+// pagination stays stable. Otherwise the default ordering applies.
+func resolveLogOrderWithFallback(sortField string, sortOrder string, prefix string) string {
+	if custom := resolveLogSortOrder(sortField, sortOrder); custom != "" {
+		return prefix + custom + ", " + prefix + "id desc"
+	}
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return clickHouseLogOrder(prefix)
+	}
+	return prefix + "created_at desc, " + prefix + "id desc"
+}
+
+func GetLogsForExport(startTimestamp, endTimestamp int64) ([]*Log, error) {
+	var logs []*Log
+	err := LOG_DB.
+		Where("type = ?", LogTypeConsume).
+		Where("created_at >= ? AND created_at < ?", startTimestamp, endTimestamp).
+		Order("created_at asc, id asc").
+		Find(&logs).Error
+	if err != nil {
+		return nil, err
+	}
+	return logs, nil
 }
 
 func assignDisplayLogIds(logs []*Log, startIdx int) {
@@ -285,6 +384,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	appendRequestHeaders(c, other)
 	otherStr := common.MapToJsonStr(other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -329,6 +429,12 @@ type RecordConsumeLogParams struct {
 	ChannelId        int                    `json:"channel_id"`
 	PromptTokens     int                    `json:"prompt_tokens"`
 	CompletionTokens int                    `json:"completion_tokens"`
+	// TokenUsed overrides PromptTokens+CompletionTokens when writing to
+	// quota_data (model call analysis / flow stats). Leave it at 0 to fall
+	// back to the default sum. This lets Anthropic-format requests keep the
+	// original PromptTokens in logs while reporting total input tokens to
+	// aggregated dashboards.
+	TokenUsed        int                    `json:"token_used"`
 	ModelName        string                 `json:"model_name"`
 	TokenName        string                 `json:"token_name"`
 	Quota            int                    `json:"quota"`
@@ -349,6 +455,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
+	appendRequestHeaders(c, params.Other)
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -387,6 +494,10 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
 	}
+	tokenUsed := params.TokenUsed
+	if tokenUsed <= 0 {
+		tokenUsed = params.PromptTokens + params.CompletionTokens
+	}
 	if common.DataExportEnabled {
 		LogQuotaData(QuotaDataLogParams{
 			UserID:    userId,
@@ -394,7 +505,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			ModelName: params.ModelName,
 			Quota:     params.Quota,
 			CreatedAt: createdAt,
-			TokenUsed: params.PromptTokens + params.CompletionTokens,
+			TokenUsed: tokenUsed,
 			UseGroup:  params.Group,
 			TokenID:   params.TokenId,
 			ChannelID: params.ChannelId,
@@ -465,7 +576,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, sortField string, sortOrder string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -504,10 +615,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if err != nil {
 		return nil, 0, err
 	}
-	order := "logs.created_at desc, logs.id desc"
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		order = clickHouseLogOrder("logs.")
-	}
+	order := resolveLogOrderWithFallback(sortField, sortOrder, "logs.")
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		return nil, 0, err
@@ -561,7 +669,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 
 const logSearchCountLimit = 10000
 
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string, sortField string, sortOrder string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB.Where("logs.user_id = ?", userId)
@@ -595,10 +703,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		common.SysError("failed to count user logs: " + err.Error())
 		return nil, 0, errors.New("查询日志失败")
 	}
-	order := "logs.id desc"
-	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		order = clickHouseLogOrder("logs.")
-	}
+	order := resolveLogOrderWithFallback(sortField, sortOrder, "logs.")
 	err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
 		common.SysError("failed to search user logs: " + err.Error())

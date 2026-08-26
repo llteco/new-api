@@ -84,6 +84,32 @@ export const getUserLogStats = (
   params: Omit<GetLogStatsParams, 'username' | 'channel'> = {}
 ) => fetchLogStats('/api/log', params, false)
 
+// Build a CSV export URL that mirrors the current /api/log list filters.
+// The URL is intended to be opened in the browser so cookies are sent
+// automatically and the response is downloaded as an attachment.
+export function getLogsExportURL(
+  params: GetLogsParams,
+  isAdmin: boolean
+): string {
+  const queryParams = buildQueryParams({
+    ...(params.type !== undefined ? { type: params.type } : {}),
+    ...(params.start_timestamp
+      ? { start_timestamp: params.start_timestamp }
+      : {}),
+    ...(params.end_timestamp ? { end_timestamp: params.end_timestamp } : {}),
+    ...(params.username ? { username: params.username } : {}),
+    ...(params.token_name ? { token_name: params.token_name } : {}),
+    ...(params.model_name ? { model_name: params.model_name } : {}),
+    ...(params.channel ? { channel: params.channel } : {}),
+    ...(params.group ? { group: params.group } : {}),
+    ...(params.request_id ? { request_id: params.request_id } : {}),
+    ...(params.upstream_request_id
+      ? { upstream_request_id: params.upstream_request_id }
+      : {}),
+  })
+  return `${buildApiPath('/api/log/export', isAdmin)}?${queryParams}`
+}
+
 export async function getUserInfo(
   userId: number
 ): Promise<{ success: boolean; message?: string; data?: UserInfo }> {

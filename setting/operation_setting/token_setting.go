@@ -5,6 +5,8 @@ import "github.com/QuantumNous/new-api/setting/config"
 // TokenSetting 令牌相关配置
 type TokenSetting struct {
 	MaxUserTokens int `json:"max_user_tokens"` // 每用户最大令牌数量
+	// 周期额度重置时区（IANA 名称，如 Asia/Shanghai）。留空跟随服务器系统时区。
+	ResetTimeZone string `json:"reset_timezone"`
 }
 
 // 默认配置

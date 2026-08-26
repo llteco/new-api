@@ -40,6 +40,7 @@ func appendToolSurchargeLogInfo(other map[string]interface{}, items []ToolSurcha
 
 type textQuotaSummary struct {
 	PromptTokens           int
+	LogPromptTokens        int
 	CompletionTokens       int
 	TotalTokens            int
 	CacheTokens            int
@@ -381,6 +382,17 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		summary.Quota = 1
 	}
 
+	// LogPromptTokens is the total input tokens used for aggregated dashboard
+	// metrics (quota_data.token_used). For Claude-native requests the stored
+	// prompt_tokens equals Anthropic's input_tokens and excludes cache read/
+	// creation tokens, so add them back. OpenAI-style usage already includes
+	// cache in prompt_tokens, so no adjustment is needed.
+	if summary.IsClaudeUsageSemantic {
+		summary.LogPromptTokens = summary.PromptTokens + summary.CacheTokens + cacheWriteTokensTotal(summary)
+	} else {
+		summary.LogPromptTokens = summary.PromptTokens
+	}
+
 	return summary
 }
 
@@ -527,6 +539,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     summary.PromptTokens,
 		CompletionTokens: summary.CompletionTokens,
+		TokenUsed:        summary.LogPromptTokens + summary.CompletionTokens,
 		ModelName:        logModel,
 		TokenName:        summary.TokenName,
 		Quota:            summary.Quota,

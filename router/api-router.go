@@ -273,6 +273,10 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
 		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
+		logRoute.GET("/stats/tokens", middleware.AdminAuth(), controller.GetLogTokenStats)
+		logRoute.GET("/stats/tokens/self", middleware.UserAuth(), controller.GetUserLogTokenStats)
+		logRoute.GET("/export", middleware.AdminAuth(), controller.ExportLogsCSV)
+		logRoute.GET("/export/self", middleware.UserAuth(), controller.ExportSelfLogsCSV)
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
@@ -282,6 +286,7 @@ func SetApiRouter(router *gin.Engine) {
 		systemTaskRoute.Use(middleware.RootAuth())
 		{
 			systemTaskRoute.POST("/log-cleanup", controller.CreateLogCleanupSystemTask)
+			systemTaskRoute.POST("/log-auto-export", controller.CreateLogAutoExportSystemTask)
 			systemTaskRoute.GET("/list", controller.ListSystemTasks)
 			systemTaskRoute.GET("/current", controller.GetCurrentSystemTask)
 			systemTaskRoute.GET("/:task_id", controller.GetSystemTask)

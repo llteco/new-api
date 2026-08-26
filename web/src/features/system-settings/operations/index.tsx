@@ -56,6 +56,13 @@ const defaultOperationsSettings: OperationsSettings = {
   'perf_metrics_setting.flush_interval': 5,
   'perf_metrics_setting.bucket_time': 'hour',
   'perf_metrics_setting.retention_days': 0,
+  'log_export_setting.enabled': true,
+  'log_export_setting.interval_minutes': 60,
+  'log_export_setting.weekday': 5,
+  'log_export_setting.hour': 18,
+  'log_export_setting.minute': 0,
+  'log_export_setting.duration_days': 7,
+  'log_export_setting.output_dir': '',
 }
 
 export function OperationsSettings() {

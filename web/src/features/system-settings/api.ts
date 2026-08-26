@@ -23,6 +23,7 @@ import type {
   FetchUpstreamRatiosRequest,
   LogCleanupTask,
   SystemOptionsResponse,
+  SystemTask,
   SystemTaskListResponse,
   SystemTaskResponse,
   UpdateOptionRequest,
@@ -70,8 +71,15 @@ export async function getCurrentLogCleanupTask() {
   return res.data
 }
 
+export async function startLogAutoExportTask() {
+  const res = await api.post<SystemTaskResponse<SystemTask>>(
+    '/api/system-task/log-auto-export'
+  )
+  return res.data
+}
+
 export async function getSystemTask(taskId: string) {
-  const res = await api.get<SystemTaskResponse<LogCleanupTask>>(
+  const res = await api.get<SystemTaskResponse<LogCleanupTask | null>>(
     `/api/system-task/${taskId}`
   )
   return res.data

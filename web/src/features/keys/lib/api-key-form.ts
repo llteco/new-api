@@ -44,6 +44,7 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       auto_groups_mode: z.enum(['inherit', 'custom']),
       auto_groups: z.array(z.string()),
       cross_group_retry: z.boolean().optional(),
+      reset_period: z.string().optional(),
       tokenCount: z.number().min(1).optional(),
     })
     .superRefine((data, ctx) => {
@@ -157,6 +158,7 @@ export function transformFormDataToPayload(
         ? data.auto_groups
         : [],
     cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
+    reset_period: data.reset_period || 'never',
   }
 }
 
@@ -193,6 +195,7 @@ export function transformApiKeyToFormDefaults(
     auto_groups_mode: autoGroupsMode,
     auto_groups: autoGroups,
     cross_group_retry: !!apiKey.cross_group_retry,
+    reset_period: apiKey.reset_period || 'never',
     tokenCount: 1,
   }
 }

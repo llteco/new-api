@@ -551,6 +551,56 @@ export const STATIC_I18N_KEYS = [
   'The model that was requested',
   'The upstream channel that served the requests',
 
+  // Dashboard token stats (constant-driven labels)
+  'Token Stats',
+  'Token Stats by User',
+  'Token Stats by Model',
+  'Token Distribution',
+  'Token Distribution Trend',
+  'Top Token Consumers',
+  'Cumulative Tokens',
+  'Line Chart',
+
+  // Usage logs natural date presets (constant-driven labels)
+  'Yesterday',
+  'This Month',
+  'This Year',
+  'Last Year',
+  'Last Month',
+
+  // Usage logs CSV export (constant-driven labels and toast messages)
+  'Export',
+  'Export to CSV',
+  'Exporting...',
+  'Export failed',
+  'No data to export',
+  'Exported {{count}} rows',
+
+  // Usage logs server-side sort toggle
+  'Sort entire dataset',
+  'Server-side sorting is enabled. Column clicks sort the entire dataset across all pages.',
+  'Client-side sorting only reorders rows on the current page. Enable to sort across the entire dataset.',
+
+  // Log auto export settings
+  'Log Auto Export',
+  'Enable Auto Export',
+  'Automatically export consumption logs to JSON on a scheduled basis.',
+  'Duration (Days)',
+  'Number of days of logs to export each time.',
+  'Check Interval (Minutes)',
+  'How often to check if the scheduled export is due.',
+  'Output Directory',
+  'Leave empty to use the default log directory. Relative paths are resolved from the working directory.',
+  'e.g., /var/log/new-api/exports',
+  'Save log export settings',
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+
   // Misc
   'Cancel',
   'Status',
