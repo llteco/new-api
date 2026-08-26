@@ -26,6 +26,8 @@ import type {
   SearchApiKeysParams,
   ApiKeyFormData,
   TokenAutoGroupsConfig,
+  TokenChannelQuota,
+  TokenChannelQuotaInput,
 } from './types'
 
 // ============================================================================
@@ -123,5 +125,26 @@ export async function fetchTokenKeysBatch(ids: number[]): Promise<{
   data?: { keys: Record<number, string> }
 }> {
   const res = await api.post('/api/token/batch/keys', { ids })
+  return res.data
+}
+
+// ============================================================================
+// Per-Channel Quota
+// ============================================================================
+
+// Get per-channel quotas for a token
+export async function getTokenChannelQuotas(
+  id: number
+): Promise<ApiResponse<TokenChannelQuota[]>> {
+  const res = await api.get(`/api/token/${id}/channel_quotas`)
+  return res.data
+}
+
+// Overwrite per-channel quotas for a token (full replacement)
+export async function updateTokenChannelQuotas(
+  id: number,
+  items: TokenChannelQuotaInput[]
+): Promise<ApiResponse> {
+  const res = await api.put(`/api/token/${id}/channel_quotas`, { items })
   return res.data
 }

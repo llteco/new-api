@@ -50,9 +50,15 @@ func initCol() {
 	}
 }
 
+func InitColumnNames() {
+	initCol()
+}
+
 var DB *gorm.DB
 
 var LOG_DB *gorm.DB
+
+var CHATLOG_DB *gorm.DB
 
 func createRootAccountIfNeed() error {
 	var user User
@@ -292,6 +298,7 @@ func migrateDB() error {
 		&SystemTaskLock{},
 		&CasbinRule{},
 		&AuthzRole{},
+		&TokenChannelQuota{},
 	)
 	if err != nil {
 		return err
@@ -353,6 +360,7 @@ func migrateDBFast() error {
 		{&SystemInstance{}, "SystemInstance"},
 		{&SystemTask{}, "SystemTask"},
 		{&SystemTaskLock{}, "SystemTaskLock"},
+		{&TokenChannelQuota{}, "TokenChannelQuota"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
@@ -401,6 +409,50 @@ func migrateLOGDB() error {
 		return migrateClickHouseLogDB()
 	}
 	return LOG_DB.AutoMigrate(&Log{})
+}
+
+func InitChatLogDB() (err error) {
+	if os.Getenv("CHAT_LOG_SQL_DSN") == "" {
+		common.SysLog("CHAT_LOG_SQL_DSN not set, chat-log detail storage disabled")
+		return nil
+	}
+	db, dbType, err := chooseDB("CHAT_LOG_SQL_DSN", false)
+	if err != nil {
+		common.FatalLog(err)
+		return err
+	}
+	common.SetChatLogDatabaseType(dbType)
+	common.SysLog("using " + string(dbType) + " as chat-log detail database")
+	if common.DebugEnabled {
+		db = db.Debug()
+	}
+	CHATLOG_DB = db
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
+	sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
+	sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+	if !common.IsMasterNode {
+		return nil
+	}
+	return migrateChatLogDB(dbType)
+}
+
+func migrateChatLogDB(dbType common.DatabaseType) error {
+	if err := CHATLOG_DB.AutoMigrate(&ChatLog{}); err != nil {
+		return err
+	}
+	if dbType == common.DatabaseTypeMySQL {
+		if err := CHATLOG_DB.Exec("ALTER TABLE chat_logs MODIFY COLUMN request_body LONGTEXT").Error; err != nil {
+			return err
+		}
+		if err := CHATLOG_DB.Exec("ALTER TABLE chat_logs MODIFY COLUMN response_body LONGTEXT").Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func migrateClickHouseLogDB() error {

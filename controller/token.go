@@ -337,6 +337,7 @@ func AddToken(c *gin.Context) {
 		ResetPeriod:        token.ResetPeriod,
 		ResetQuota:         token.RemainQuota,
 		NextResetTime:      nextReset,
+		ChatLogEnabled:     token.ChatLogEnabled,
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -424,6 +425,7 @@ func UpdateToken(c *gin.Context) {
 				return
 			}
 		}
+		cleanToken.ChatLogEnabled = token.ChatLogEnabled
 		cleanToken.ResetPeriod = token.ResetPeriod
 		cleanToken.ResetQuota = 0
 		cleanToken.NextResetTime = 0
@@ -488,4 +490,60 @@ func GetTokenKeysBatch(c *gin.Context) {
 		keysMap[t.Id] = t.GetFullKey()
 	}
 	common.ApiSuccess(c, gin.H{"keys": keysMap})
+}
+
+func GetTokenChannelQuotas(c *gin.Context) {
+	tokenId, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的令牌 ID"})
+		return
+	}
+	tok, err := model.GetTokenById(tokenId)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "令牌不存在"})
+		return
+	}
+	userId := c.GetInt("id")
+	role := c.GetInt("role")
+	if tok.UserId != userId && role < common.RoleAdminUser {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "无权访问该令牌"})
+		return
+	}
+	rows, err := model.GetAllTokenChannelQuotas(tokenId)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows})
+}
+
+func UpdateTokenChannelQuotas(c *gin.Context) {
+	tokenId, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的令牌 ID"})
+		return
+	}
+	tok, err := model.GetTokenById(tokenId)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "令牌不存在"})
+		return
+	}
+	userId := c.GetInt("id")
+	role := c.GetInt("role")
+	if tok.UserId != userId && role < common.RoleAdminUser {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "无权修改该令牌"})
+		return
+	}
+	var req struct {
+		Items []model.TokenChannelQuota `json:"items"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求体解析失败: " + err.Error()})
+		return
+	}
+	if err := model.ReplaceTokenChannelQuotas(tokenId, req.Items); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

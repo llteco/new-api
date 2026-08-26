@@ -48,6 +48,8 @@ export const apiKeySchema = z.object({
   allow_ips: z.string().nullish().default(''),
   reset_period: z.string().nullish().default('never'),
   reset_quota: z.number().nullish().default(0),
+  channel_quota_mode: z.boolean().optional().default(false),
+  chat_log_enabled: z.boolean().optional().default(false),
 })
 
 export type ApiKey = z.infer<typeof apiKeySchema>
@@ -97,6 +99,26 @@ export interface ApiKeyFormData {
   auto_groups: string[]
   cross_group_retry: boolean
   reset_period: string
+  channel_quota_mode?: boolean
+  chat_log_enabled?: boolean
+}
+
+// ============================================================================
+// Per-Channel Quota Types
+// ============================================================================
+
+export interface TokenChannelQuota {
+  id: number
+  token_id: number
+  channel_id: number
+  remain_quota: number
+  used_quota: number
+  reset_quota: number
+}
+
+export interface TokenChannelQuotaInput {
+  channel_id: number
+  reset_quota: number
 }
 
 export interface TokenAutoGroupsConfig {

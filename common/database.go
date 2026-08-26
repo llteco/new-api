@@ -41,4 +41,10 @@ func UsingLogDatabase(databaseType DatabaseType) bool {
 	return logDatabaseType == databaseType
 }
 
+var chatLogDatabaseType = DatabaseTypeSQLite
+
+func SetChatLogDatabaseType(databaseType DatabaseType) {
+	chatLogDatabaseType = databaseType
+}
+
 var SQLitePath = "one-api.db?_busy_timeout=30000"

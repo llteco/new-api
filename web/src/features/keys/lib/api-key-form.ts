@@ -46,6 +46,11 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       cross_group_retry: z.boolean().optional(),
       reset_period: z.string().optional(),
       tokenCount: z.number().min(1).optional(),
+      channel_quota_mode: z.boolean(),
+      chat_log_enabled: z.boolean(),
+      channel_quotas: z.array(
+        z.object({ channel_id: z.number(), reset_quota: z.number() })
+      ),
     })
     .superRefine((data, ctx) => {
       if (data.group === 'auto') {
@@ -79,6 +84,10 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
             message: t('Auto groups must not contain duplicates'),
           })
         }
+      }
+
+      if (data.channel_quota_mode) {
+        return
       }
 
       if (data.unlimited_quota) {
@@ -116,6 +125,9 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   auto_groups: [],
   cross_group_retry: true,
   tokenCount: 1,
+  channel_quota_mode: false,
+  chat_log_enabled: false,
+  channel_quotas: [],
 }
 
 export function getApiKeyFormDefaultValues(
@@ -159,6 +171,8 @@ export function transformFormDataToPayload(
         : [],
     cross_group_retry: data.group === 'auto' ? !!data.cross_group_retry : false,
     reset_period: data.reset_period || 'never',
+    channel_quota_mode: !!data.channel_quota_mode,
+    chat_log_enabled: !!data.chat_log_enabled,
   }
 }
 
@@ -197,5 +211,8 @@ export function transformApiKeyToFormDefaults(
     cross_group_retry: !!apiKey.cross_group_retry,
     reset_period: apiKey.reset_period || 'never',
     tokenCount: 1,
+    channel_quota_mode: !!apiKey.channel_quota_mode,
+    chat_log_enabled: !!apiKey.chat_log_enabled,
+    channel_quotas: [],
   }
 }

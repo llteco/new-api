@@ -22,6 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 type TokenDetails struct {
@@ -404,6 +405,42 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(remainQuota), logger.FormatQuota(quota))
 	}
 	return nil
+}
+
+func PreConsumeTokenQuotaChannel(relayInfo *relaycommon.RelayInfo, quota int) (hit bool, err error) {
+	if quota < 0 {
+		return false, errors.New("quota 不能为负数！")
+	}
+	if relayInfo.IsPlayground {
+		return false, nil
+	}
+	token, err := model.GetTokenByKey(relayInfo.TokenKey, false)
+	if err != nil {
+		return false, err
+	}
+	if !token.ChannelQuotaMode {
+		return false, PreConsumeTokenQuota(relayInfo, quota)
+	}
+	// 预扣费早于渠道选择（聊天链路）时 ChannelMeta 尚未初始化，视为渠道未配置，跳过令牌侧预扣
+	channelId := 0
+	if relayInfo.ChannelMeta != nil {
+		channelId = relayInfo.ChannelId
+	}
+	row, rowErr := model.GetTokenChannelQuota(relayInfo.TokenId, channelId)
+	if rowErr != nil {
+		if errors.Is(rowErr, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, rowErr
+	}
+	if row.RemainQuota < quota {
+		return true, fmt.Errorf("分渠道额度不足, 渠道 %d 剩余: %s, 需要: %s",
+			channelId, logger.FormatQuota(row.RemainQuota), logger.FormatQuota(quota))
+	}
+	if err := model.DecreaseTokenChannelQuota(relayInfo.TokenId, channelId, quota); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 type postConsumeQuotaResult struct {

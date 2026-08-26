@@ -53,6 +53,8 @@ const baseApiKey: ApiKey = {
   allow_ips: '',
   reset_period: 'never',
   reset_quota: 0,
+  channel_quota_mode: false,
+  chat_log_enabled: false,
 }
 
 describe('API key Auto group form mapping', () => {

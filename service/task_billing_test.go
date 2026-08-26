@@ -33,8 +33,11 @@ func TestMain(m *testing.M) {
 
 	model.DB = db
 	model.LOG_DB = db
+	model.CHATLOG_DB = db
 
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.SetChatLogDatabaseType(common.DatabaseTypeSQLite)
+	model.InitColumnNames()
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
@@ -43,6 +46,7 @@ func TestMain(m *testing.M) {
 		&model.Task{},
 		&model.User{},
 		&model.Token{},
+		&model.TokenChannelQuota{},
 		&model.Log{},
 		&model.Channel{},
 		&model.Midjourney{},
@@ -50,6 +54,7 @@ func TestMain(m *testing.M) {
 		&model.UserSubscription{},
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
+		&model.ChatLog{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -67,6 +72,7 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM tasks")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")
+		model.DB.Exec("DELETE FROM token_channel_quotas")
 		model.DB.Exec("DELETE FROM logs")
 		model.DB.Exec("DELETE FROM channels")
 		model.DB.Exec("DELETE FROM midjourneys")
@@ -74,6 +80,7 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM user_subscriptions")
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")
+		model.DB.Exec("DELETE FROM chat_logs")
 	})
 }
 
