@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"net/http/httptest"
 	"testing"
 
@@ -18,52 +19,43 @@ func newCaptureTestContext() (*gin.Context, *httptest.ResponseRecorder) {
 
 func TestChatLogCaptureWriter_BuffersBytes(t *testing.T) {
 	c, rec := newCaptureTestContext()
-	cap := wrapWithChatLogCapture(c, c.Writer, 1024).(*chatLogCaptureWriter)
+	cap := wrapWithChatLogCapture(c, c.Writer).(*chatLogCaptureWriter)
 
 	n, err := cap.Write([]byte(`{"hello":"world"}`))
 	require.NoError(t, err)
 	assert.Equal(t, 17, n)
 
-	got, truncated := cap.capturedBytes()
-	assert.False(t, truncated)
+	got := cap.capturedBytes()
 	assert.Equal(t, `{"hello":"world"}`, got)
 	assert.Equal(t, `{"hello":"world"}`, rec.Body.String(), "underlying writer must still receive data")
 }
 
-func TestChatLogCaptureWriter_TruncatesAtCap(t *testing.T) {
-	c, _ := newCaptureTestContext()
-	cap := wrapWithChatLogCapture(c, c.Writer, 4).(*chatLogCaptureWriter)
+func TestChatLogCaptureWriter_NoCapOnLargeBodies(t *testing.T) {
+	c, rec := newCaptureTestContext()
+	cap := wrapWithChatLogCapture(c, c.Writer).(*chatLogCaptureWriter)
 
-	n, err := cap.Write([]byte(`1234567890`))
+	big := bytes.Repeat([]byte("x"), 512*1024)
+	n, err := cap.Write(big)
 	require.NoError(t, err)
-	assert.Equal(t, 10, n, "all bytes written to underlying writer")
+	assert.Equal(t, len(big), n, "all bytes written to underlying writer")
 
-	got, truncated := cap.capturedBytes()
-	require.True(t, truncated)
-	assert.Equal(t, `1234`, got)
-}
-
-func TestChatLogCaptureWriter_NoBufferWhenMaxZero(t *testing.T) {
-	c, _ := newCaptureTestContext()
-	w := wrapWithChatLogCapture(c, c.Writer, 0)
-	_, ok := w.(*chatLogCaptureWriter)
-	assert.False(t, ok, "maxBytes<=0 returns the original writer unwrapped")
+	assert.Equal(t, len(big), len(cap.capturedBytes()), "capture must not truncate")
+	assert.Equal(t, len(big), rec.Body.Len())
 }
 
 func TestChatLogCaptureWriter_MultiWriteAccumulates(t *testing.T) {
 	c, _ := newCaptureTestContext()
-	cap := wrapWithChatLogCapture(c, c.Writer, 100).(*chatLogCaptureWriter)
+	cap := wrapWithChatLogCapture(c, c.Writer).(*chatLogCaptureWriter)
 
 	_, _ = cap.Write([]byte(`abc`))
 	_, _ = cap.Write([]byte(`def`))
-	got, truncated := cap.capturedBytes()
-	assert.False(t, truncated)
+	got := cap.capturedBytes()
 	assert.Equal(t, `abcdef`, got)
 }
 
 func TestChatLogCaptureWriter_PreservesStatusCode(t *testing.T) {
 	c, rec := newCaptureTestContext()
-	cap := wrapWithChatLogCapture(c, c.Writer, 100).(*chatLogCaptureWriter)
+	cap := wrapWithChatLogCapture(c, c.Writer).(*chatLogCaptureWriter)
 	cap.WriteHeader(207)
 	_, _ = cap.Write([]byte(`x`))
 	assert.Equal(t, 207, rec.Code, "embedded ResponseWriter must pass status through")

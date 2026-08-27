@@ -9,24 +9,20 @@ import (
 
 type chatLogCaptureWriter struct {
 	gin.ResponseWriter
-	buffer    bytes.Buffer
-	mu        sync.Mutex
-	maxBytes  int
-	truncated bool
+	buffer bytes.Buffer
+	mu     sync.Mutex
 }
 
-func wrapWithChatLogCapture(c *gin.Context, original gin.ResponseWriter, maxBytes int) gin.ResponseWriter {
-	if maxBytes <= 0 {
-		return original
-	}
+func wrapWithChatLogCapture(c *gin.Context, original gin.ResponseWriter) gin.ResponseWriter {
 	w := &chatLogCaptureWriter{
 		ResponseWriter: original,
-		maxBytes:       maxBytes,
 	}
 	c.Writer = w
 	return w
 }
 
+// ponytail: response is buffered fully in memory per request; chat-log is
+// opt-in per token, add a cap again if this ever becomes a memory problem.
 func (w *chatLogCaptureWriter) Write(data []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(data)
 	if err != nil {
@@ -34,25 +30,12 @@ func (w *chatLogCaptureWriter) Write(data []byte) (int, error) {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.truncated {
-		return n, nil
-	}
-	remaining := w.maxBytes - w.buffer.Len()
-	if remaining <= 0 {
-		w.truncated = true
-		return n, nil
-	}
-	if len(data) <= remaining {
-		w.buffer.Write(data)
-	} else {
-		w.buffer.Write(data[:remaining])
-		w.truncated = true
-	}
+	w.buffer.Write(data)
 	return n, nil
 }
 
-func (w *chatLogCaptureWriter) capturedBytes() (string, bool) {
+func (w *chatLogCaptureWriter) capturedBytes() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.buffer.String(), w.truncated
+	return w.buffer.String()
 }

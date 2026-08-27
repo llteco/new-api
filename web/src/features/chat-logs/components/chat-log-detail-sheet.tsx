@@ -33,14 +33,7 @@ import {
 import { formatTimestampToDate } from '@/lib/format'
 
 import { chatLogsQueryKeys, getChatLogDetail } from '../api'
-
-function tryFormat(body: string): string {
-  try {
-    return JSON.stringify(JSON.parse(body), null, 2)
-  } catch {
-    return body
-  }
-}
+import { formatChatLogBody } from '../lib/format-body'
 
 export interface ChatLogDetailSheetProps {
   open: boolean
@@ -119,7 +112,7 @@ export function ChatLogDetailSheet(props: ChatLogDetailSheetProps) {
             {t('Request Body')}
           </span>
           <CodeBlock
-            code={tryFormat(record.request_body || '')}
+            code={formatChatLogBody(record.request_body || '')}
             language='json'
             showToolbar
             maxExpandedLines={30}
@@ -131,7 +124,7 @@ export function ChatLogDetailSheet(props: ChatLogDetailSheetProps) {
             {t('Response Body')}
           </span>
           <CodeBlock
-            code={tryFormat(record.response_body || '')}
+            code={formatChatLogBody(record.response_body || '')}
             language='json'
             showToolbar
             maxExpandedLines={30}
