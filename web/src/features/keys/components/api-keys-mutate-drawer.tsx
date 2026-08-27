@@ -74,12 +74,16 @@ import { getUserModels, getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   createApiKey,
   updateApiKey,
+  updateAdminApiKey,
   getApiKey,
+  getAdminApiKey,
   getTokenAutoGroups,
+  getAdminTokenAutoGroups,
   getTokenChannelQuotas,
   updateTokenChannelQuotas,
 } from '../api'
@@ -96,9 +100,9 @@ import {
   ApiKeyGroupCombobox,
   type ApiKeyGroupOption,
 } from './api-key-group-combobox'
-import { ChannelQuotaEditor } from './channel-quota-editor'
 import { useApiKeys } from './api-keys-provider'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
+import { ChannelQuotaEditor } from './channel-quota-editor'
 
 type ApiKeyMutateDrawerProps = {
   open: boolean
@@ -114,8 +118,12 @@ export function ApiKeysMutateDrawer({
   const { t } = useTranslation()
   const isUpdate = !!currentRow
   const currentRowId = currentRow?.id
-  const { triggerRefresh } = useApiKeys()
+  const { triggerRefresh, adminMode: isAdminKeysMode } = useApiKeys()
   const { status, loading: statusLoading } = useStatus()
+  const currentUserId = useAuthStore((s) => s.auth.user?.id ?? 0)
+  // 管理员编辑其他用户密钥时，详情/auto-groups/更新走 admin 端点
+  const isAdminManaged =
+    isAdminKeysMode && isUpdate && currentRow.user_id !== currentUserId
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [initializedTarget, setInitializedTarget] = useState<string | null>(
@@ -148,8 +156,11 @@ export function ApiKeysMutateDrawer({
     isFetched: apiKeyFetched,
     isFetching: apiKeyFetching,
   } = useQuery({
-    queryKey: ['api-key', currentRowId],
-    queryFn: () => getApiKey(currentRowId ?? 0),
+    queryKey: ['api-key', currentRowId, isAdminManaged ? 'admin' : 'mine'],
+    queryFn: () =>
+      isAdminManaged
+        ? getAdminApiKey(currentRowId ?? 0)
+        : getApiKey(currentRowId ?? 0),
     enabled: open && isUpdate && currentRowId !== undefined,
     staleTime: 0,
   })
@@ -159,8 +170,14 @@ export function ApiKeysMutateDrawer({
     isFetched: autoGroupsFetched,
     isFetching: autoGroupsFetching,
   } = useQuery({
-    queryKey: ['token-auto-groups'],
-    queryFn: getTokenAutoGroups,
+    queryKey: [
+      'token-auto-groups',
+      isAdminManaged ? currentRow?.user_id : 'mine',
+    ],
+    queryFn: () =>
+      isAdminManaged && currentRow?.user_id
+        ? getAdminTokenAutoGroups(currentRow.user_id)
+        : getTokenAutoGroups(),
     enabled: open,
     staleTime: 0,
   })
@@ -316,10 +333,15 @@ export function ApiKeysMutateDrawer({
       const basePayload = transformFormDataToPayload(data)
 
       if (isUpdate && currentRow) {
-        const result = await updateApiKey({
-          ...basePayload,
-          id: currentRow.id,
-        })
+        const result = isAdminManaged
+          ? await updateAdminApiKey({
+              ...basePayload,
+              id: currentRow.id,
+            })
+          : await updateApiKey({
+              ...basePayload,
+              id: currentRow.id,
+            })
         if (result.success) {
           if (data.channel_quota_mode) {
             try {
@@ -328,9 +350,7 @@ export function ApiKeysMutateDrawer({
                 data.channel_quotas ?? []
               )
               if (!cqResult.success) {
-                toast.error(
-                  cqResult.message || t(ERROR_MESSAGES.UPDATE_FAILED)
-                )
+                toast.error(cqResult.message || t(ERROR_MESSAGES.UPDATE_FAILED))
               }
             } catch (error) {
               handleServerError(error)
@@ -708,8 +728,12 @@ export function ApiKeysMutateDrawer({
                           <SelectContent>
                             <SelectItem value='never'>{t('Never')}</SelectItem>
                             <SelectItem value='daily'>{t('Daily')}</SelectItem>
-                            <SelectItem value='weekly'>{t('Weekly')}</SelectItem>
-                            <SelectItem value='monthly'>{t('Monthly')}</SelectItem>
+                            <SelectItem value='weekly'>
+                              {t('Weekly')}
+                            </SelectItem>
+                            <SelectItem value='monthly'>
+                              {t('Monthly')}
+                            </SelectItem>
                           </SelectContent>
                         </Select>
                       </FormControl>
@@ -779,7 +803,9 @@ export function ApiKeysMutateDrawer({
                     name='channel_quotas'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('Channel quota configuration')}</FormLabel>
+                        <FormLabel>
+                          {t('Channel quota configuration')}
+                        </FormLabel>
                         <FormControl>
                           <ChannelQuotaEditor
                             value={field.value}
@@ -793,9 +819,7 @@ export function ApiKeysMutateDrawer({
                   />
                 ) : (
                   <FormDescription>
-                    {t(
-                      'Save the key first, then configure per-channel quotas'
-                    )}
+                    {t('Save the key first, then configure per-channel quotas')}
                   </FormDescription>
                 ))}
             </SideDrawerSection>

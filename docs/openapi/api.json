@@ -3718,6 +3718,301 @@
         ]
       }
     },
+    "/api/token/admin/": {
+      "get": {
+        "summary": "获取所有用户的令牌",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）；密钥以掩码返回，不提供明文",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "p",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "description": "按用户过滤，缺省为全部用户",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "更新任意用户的令牌",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）；auto_groups 按令牌属主分组校验；支持 status_only",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "status_only",
+            "in": "query",
+            "description": "仅更新状态",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Token"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/token/admin/search": {
+      "get": {
+        "summary": "搜索所有用户的令牌",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "keyword",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "description": "",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "description": "按用户过滤，缺省为全部用户",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/token/admin/auto-groups": {
+      "get": {
+        "summary": "获取指定用户可选的自动分组",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "query",
+            "description": "目标用户 ID",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/token/admin/{id}": {
+      "get": {
+        "summary": "获取任意用户的指定令牌",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）；密钥以掩码返回，不提供明文",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "删除任意用户的令牌",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "",
+            "required": true,
+            "example": 0,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
+    "/api/token/admin/batch": {
+      "post": {
+        "summary": "批量删除令牌（跨用户）",
+        "deprecated": false,
+        "description": "👨‍💼 需要管理员权限（Admin）",
+        "tags": [
+          "令牌管理"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功",
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "Combination343": []
+          },
+          {
+            "Combination1243": []
+          }
+        ]
+      }
+    },
     "/api/token/search": {
       "get": {
         "summary": "搜索令牌",

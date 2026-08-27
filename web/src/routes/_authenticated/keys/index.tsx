@@ -31,6 +31,9 @@ const apiKeySearchSchema = z.object({
     .catch([]),
   filter: z.string().optional().catch(''),
   token: z.string().optional().catch(''),
+  // 管理员模式：mine 仅自己的密钥，all 管理全部用户
+  scope: z.enum(['mine', 'all']).optional().catch('mine'),
+  userId: z.number().optional().catch(undefined),
 })
 
 export const Route = createFileRoute('/_authenticated/keys/')({

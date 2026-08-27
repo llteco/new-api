@@ -16,19 +16,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { getRouteApi } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { ApiKeysDialogs } from './components/api-keys-dialogs'
 import { ApiKeysPrimaryButtons } from './components/api-keys-primary-buttons'
 import { ApiKeysProvider } from './components/api-keys-provider'
 import { ApiKeysTable } from './components/api-keys-table'
 
+const route = getRouteApi('/_authenticated/keys/')
+
 export function ApiKeys() {
   const { t } = useTranslation()
+  // 管理员模式由 URL scope 参数 + 管理员角色共同决定，经 Provider 下发
+  const scope = route.useSearch().scope
+  const role = useAuthStore((s) => s.auth.user?.role ?? 0)
+  const adminMode = scope === 'all' && role >= ROLE.ADMIN
   return (
-    <ApiKeysProvider>
+    <ApiKeysProvider adminMode={adminMode}>
       <SectionPageLayout fixedContent>
         <SectionPageLayout.Title>{t('API Keys')}</SectionPageLayout.Title>
         <SectionPageLayout.Actions>

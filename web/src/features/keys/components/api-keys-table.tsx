@@ -40,19 +40,33 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { formatQuota } from '@/lib/format'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { getApiKeys, searchApiKeys } from '../api'
+import {
+  getApiKeys,
+  searchApiKeys,
+  getAdminApiKeys,
+  searchAdminApiKeys,
+} from '../api'
 import {
   API_KEY_STATUS,
   API_KEY_STATUS_OPTIONS,
   API_KEY_STATUSES,
   ERROR_MESSAGES,
 } from '../constants'
-import type { ApiKey } from '../types'
+import type { ApiKey, GetApiKeysResponse } from '../types'
 import { ApiKeyCell, UnlimitedQuotaBadge } from './api-keys-cells'
 import { useApiKeysColumns } from './api-keys-columns'
 import { useApiKeys } from './api-keys-provider'
@@ -188,9 +202,11 @@ function ApiKeysMobileList({
 
 export function ApiKeysTable() {
   const { t } = useTranslation()
-  const { refreshTrigger } = useApiKeys()
+  const { refreshTrigger, adminMode: isAdminKeysMode } = useApiKeys()
   const [now, setNow] = useState(() => Date.now())
-  const columns = useApiKeysColumns(now)
+  const search = route.useSearch()
+  const navigate = route.useNavigate()
+  const columns = useApiKeysColumns(now, isAdminKeysMode)
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -230,6 +246,39 @@ export function ApiKeysTable() {
   })
   const shouldSearch = Boolean(globalFilter?.trim() || tokenFilter.trim())
 
+  // 管理员模式：按用户 ID 筛选（带 400ms 防抖，写入 URL search param）
+  const isAdminUser = useAuthStore(
+    (s) => (s.auth.user?.role ?? 0) >= ROLE.ADMIN
+  )
+  const [userIdFilterInput, setUserIdFilterInput] = useState(() =>
+    search.userId != null ? String(search.userId) : ''
+  )
+  useEffect(() => {
+    if (!isAdminKeysMode) return
+    const parsed = Number.parseInt(userIdFilterInput, 10)
+    const next = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+    if ((search.userId ?? undefined) === next) return
+    const timer = window.setTimeout(() => {
+      navigate({
+        search: (prev) => ({ ...prev, userId: next, page: 1 }),
+        replace: true,
+      })
+    }, 400)
+    return () => window.clearTimeout(timer)
+  }, [userIdFilterInput, isAdminKeysMode, search.userId, navigate])
+
+  const handleScopeChange = (scope: string | null) => {
+    setUserIdFilterInput('')
+    navigate({
+      search: (prev) => ({
+        ...prev,
+        scope: scope === 'all' ? 'all' : 'mine',
+        userId: undefined,
+        page: 1,
+      }),
+    })
+  }
+
   // Fetch data with React Query
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
   const { data, isLoading, isFetching } = useQuery({
@@ -240,19 +289,39 @@ export function ApiKeysTable() {
       globalFilter,
       tokenFilter,
       refreshTrigger,
+      isAdminKeysMode ? 'admin' : 'mine',
+      isAdminKeysMode ? (search.userId ?? 0) : 0,
     ],
     queryFn: async () => {
-      const result = shouldSearch
-        ? await searchApiKeys({
-            keyword: globalFilter,
-            token: tokenFilter,
-            p: pagination.pageIndex + 1,
-            size: pagination.pageSize,
-          })
-        : await getApiKeys({
-            p: pagination.pageIndex + 1,
-            size: pagination.pageSize,
-          })
+      const page = pagination.pageIndex + 1
+      let result: GetApiKeysResponse
+      if (isAdminKeysMode && shouldSearch) {
+        result = await searchAdminApiKeys({
+          keyword: globalFilter,
+          token: tokenFilter,
+          userId: search.userId,
+          p: page,
+          size: pagination.pageSize,
+        })
+      } else if (isAdminKeysMode) {
+        result = await getAdminApiKeys({
+          userId: search.userId,
+          p: page,
+          size: pagination.pageSize,
+        })
+      } else if (shouldSearch) {
+        result = await searchApiKeys({
+          keyword: globalFilter,
+          token: tokenFilter,
+          p: page,
+          size: pagination.pageSize,
+        })
+      } else {
+        result = await getApiKeys({
+          p: page,
+          size: pagination.pageSize,
+        })
+      }
 
       if (!result.success) {
         toast.error(
@@ -309,13 +378,43 @@ export function ApiKeysTable() {
         searchPlaceholder: t('Filter by name...'),
         searchDebounceMs: 500,
         additionalSearch: (
-          <Input
-            placeholder={t('Filter by API key...')}
-            aria-label={t('Filter by API key...')}
-            value={tokenFilterInput}
-            onChange={(e) => setTokenFilterInput(e.target.value)}
-            className='w-full sm:w-50 lg:w-60'
-          />
+          <div className='flex w-full items-center gap-2 sm:w-auto'>
+            {isAdminUser && (
+              <Select
+                value={search.scope ?? 'mine'}
+                onValueChange={handleScopeChange}
+              >
+                <SelectTrigger
+                  aria-label={t('Key scope')}
+                  className='w-[130px] shrink-0'
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='mine'>{t('My Keys')}</SelectItem>
+                  <SelectItem value='all'>{t('All Users')}</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            {isAdminKeysMode && (
+              <Input
+                type='number'
+                min='1'
+                placeholder={t('Filter by user ID...')}
+                aria-label={t('Filter by user ID...')}
+                value={userIdFilterInput}
+                onChange={(e) => setUserIdFilterInput(e.target.value)}
+                className='w-full sm:w-36'
+              />
+            )}
+            <Input
+              placeholder={t('Filter by API key...')}
+              aria-label={t('Filter by API key...')}
+              value={tokenFilterInput}
+              onChange={(e) => setTokenFilterInput(e.target.value)}
+              className='w-full sm:w-50 lg:w-60'
+            />
+          </div>
         ),
         filters: [
           {

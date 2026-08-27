@@ -73,14 +73,30 @@ function useGroupRatios(): Record<string, number | string> {
   return data ?? {}
 }
 
-export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
+export function useApiKeysColumns(
+  now: number,
+  showOwner = false
+): ColumnDef<ApiKey>[] {
   const { t, i18n } = useTranslation()
   const groupRatios = useGroupRatios()
   const shouldReduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const justNowLabel = t('Just now')
   const staleAccessThreshold = dayjs(now).subtract(3, 'month').valueOf()
-  return [
+
+  const ownerColumn: ColumnDef<ApiKey> = {
+    accessorKey: 'user_id',
+    header: t('Owner'),
+    cell: ({ row }) => {
+      const userId = row.getValue('user_id') as number
+      if (!userId) return null
+      return <span className='text-muted-foreground'>#{userId}</span>
+    },
+    size: 90,
+    meta: { mobileHidden: true },
+  }
+
+  const columns: ColumnDef<ApiKey>[] = [
     {
       id: 'select',
       header: ({ table }) => (
@@ -113,6 +129,7 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
       size: 180,
       meta: { mobileTitle: true },
     },
+    ...(showOwner ? [ownerColumn] : []),
     {
       accessorKey: 'status',
       header: t('Status'),
@@ -300,4 +317,6 @@ export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
       meta: { pinned: 'right' as const },
     },
   ]
+
+  return columns
 }

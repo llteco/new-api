@@ -129,6 +129,84 @@ export async function fetchTokenKeysBatch(ids: number[]): Promise<{
 }
 
 // ============================================================================
+// Admin API Key Management (cross-user, no plaintext key access)
+// ============================================================================
+
+// List all users' API keys (paginated), optionally filtered by user
+export async function getAdminApiKeys(
+  params: GetApiKeysParams & { userId?: number } = {}
+): Promise<GetApiKeysResponse> {
+  const { p = 1, size = 10, userId } = params
+  const queryParams = new URLSearchParams({ p: String(p), size: String(size) })
+  if (userId != null) queryParams.set('user_id', String(userId))
+  const res = await api.get(`/api/token/admin/?${queryParams.toString()}`)
+  return res.data
+}
+
+// Search all users' API keys by keyword/token/user
+export async function searchAdminApiKeys(
+  params: SearchApiKeysParams & { userId?: number }
+): Promise<GetApiKeysResponse> {
+  const { keyword = '', token = '', userId, p, size } = params
+  const queryParams = new URLSearchParams()
+  if (keyword) queryParams.set('keyword', keyword)
+  if (token) queryParams.set('token', token)
+  if (userId != null) queryParams.set('user_id', String(userId))
+  if (p != null) queryParams.set('p', String(p))
+  if (size != null) queryParams.set('size', String(size))
+  const res = await api.get(`/api/token/admin/search?${queryParams.toString()}`)
+  return res.data
+}
+
+// Get any user's API key by ID (masked key only)
+export async function getAdminApiKey(id: number): Promise<ApiResponse<ApiKey>> {
+  const res = await api.get(`/api/token/admin/${id}`)
+  return res.data
+}
+
+// Get the selectable auto groups for a target user (admin only)
+export async function getAdminTokenAutoGroups(
+  userId: number
+): Promise<ApiResponse<TokenAutoGroupsConfig>> {
+  const res = await api.get(`/api/token/admin/auto-groups?user_id=${userId}`)
+  return res.data
+}
+
+// Update any user's API key
+export async function updateAdminApiKey(
+  data: ApiKeyFormData & { id: number }
+): Promise<ApiResponse<ApiKey>> {
+  const res = await api.put('/api/token/admin/', data)
+  return res.data
+}
+
+// Delete any user's API key
+export async function deleteAdminApiKey(id: number): Promise<ApiResponse> {
+  const res = await api.delete(`/api/token/admin/${id}/`)
+  return res.data
+}
+
+// Batch delete API keys across users
+export async function batchDeleteAdminApiKeys(
+  ids: number[]
+): Promise<ApiResponse<number>> {
+  const res = await api.post('/api/token/admin/batch', { ids })
+  return res.data
+}
+
+// Update any user's API key status (enable/disable)
+export async function updateAdminApiKeyStatus(
+  id: number,
+  status: number
+): Promise<ApiResponse<ApiKey>> {
+  const res = await api.put('/api/token/admin/?status_only=true', {
+    id,
+    status,
+  })
+  return res.data
+}
+
+// ============================================================================
 // Per-Channel Quota
 // ============================================================================
 

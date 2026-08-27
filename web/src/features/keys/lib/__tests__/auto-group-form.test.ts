@@ -36,6 +36,7 @@ const t = ((key: string, options?: Record<string, unknown>) => {
 
 const baseApiKey: ApiKey = {
   id: 1,
+  user_id: 1,
   name: 'test',
   key: 'sk-test',
   status: 1,
