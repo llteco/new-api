@@ -78,6 +78,17 @@ func getTokenRequestUserGroup(c *gin.Context) (string, error) {
 }
 
 func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) bool {
+	userGroup, err := getTokenRequestUserGroup(c)
+	if err != nil {
+		common.ApiError(c, err)
+		return false
+	}
+	return setTokenAutoGroupsForGroup(c, token, groups, userGroup)
+}
+
+// setTokenAutoGroupsForGroup 按指定用户的分组校验可选分组，
+// 管理员编辑其他用户令牌时应传入令牌属主的分组。
+func setTokenAutoGroupsForGroup(c *gin.Context, token *model.Token, groups []string, userGroup string) bool {
 	if len(groups) == 0 {
 		if err := token.SetAutoGroups(nil); err != nil {
 			common.ApiError(c, err)
@@ -92,11 +103,6 @@ func setTokenAutoGroups(c *gin.Context, token *model.Token, groups []string) boo
 		return false
 	}
 
-	userGroup, err := getTokenRequestUserGroup(c)
-	if err != nil {
-		common.ApiError(c, err)
-		return false
-	}
 	seen := make(map[string]struct{}, len(groups))
 	for _, group := range groups {
 		if _, ok := seen[group]; ok {
@@ -364,36 +370,35 @@ func DeleteToken(c *gin.Context) {
 	})
 }
 
-func UpdateToken(c *gin.Context) {
-	userId := c.GetInt("id")
-	statusOnly := c.Query("status_only")
+// bindTokenRequest 解析并校验令牌写入请求，UpdateToken / AdminUpdateToken 共用
+func bindTokenRequest(c *gin.Context) (*tokenRequest, bool) {
 	request := tokenRequest{}
-	err := c.ShouldBindJSON(&request)
-	if err != nil {
+	if err := c.ShouldBindJSON(&request); err != nil {
 		common.ApiError(c, err)
-		return
+		return nil, false
 	}
-	token := request.Token
-	if len(token.Name) > 50 {
+	if len(request.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
-		return
+		return nil, false
 	}
-	if !token.UnlimitedQuota {
-		if token.RemainQuota < 0 {
+	// 非无限额度时，检查额度值是否超出有效范围
+	if !request.UnlimitedQuota {
+		if request.RemainQuota < 0 {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaNegative)
-			return
+			return nil, false
 		}
 		maxQuotaValue := common.QuotaFromFloat(1000000000 * common.QuotaPerUnit)
-		if token.RemainQuota > maxQuotaValue {
+		if request.RemainQuota > maxQuotaValue {
 			common.ApiErrorI18n(c, i18n.MsgTokenQuotaExceedMax, map[string]any{"Max": maxQuotaValue})
-			return
+			return nil, false
 		}
 	}
-	cleanToken, err := model.GetTokenByIds(token.Id, userId)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
+	return &request, true
+}
+
+// applyTokenUpdate 对已加载的令牌应用更新并落库，auto_groups 按令牌属主分组校验
+func applyTokenUpdate(c *gin.Context, request *tokenRequest, statusOnly bool, cleanToken *model.Token) {
+	token := request.Token
 	if token.Status == common.TokenStatusEnabled {
 		if cleanToken.Status == common.TokenStatusExpired && cleanToken.ExpiredTime <= common.GetTimestamp() && cleanToken.ExpiredTime != -1 {
 			common.ApiErrorI18n(c, i18n.MsgTokenExpiredCannotEnable)
@@ -404,7 +409,7 @@ func UpdateToken(c *gin.Context) {
 			return
 		}
 	}
-	if statusOnly != "" {
+	if statusOnly {
 		cleanToken.Status = token.Status
 	} else {
 		// If you add more fields, please also update token.Update()
@@ -421,7 +426,12 @@ func UpdateToken(c *gin.Context) {
 			cleanToken.CrossGroupRetry = false
 			_ = cleanToken.SetAutoGroups(nil)
 		} else if request.AutoGroups.Set {
-			if !setTokenAutoGroups(c, cleanToken, request.AutoGroups.Groups) {
+			ownerGroup, err := model.GetUserGroup(cleanToken.UserId, false)
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			if !setTokenAutoGroupsForGroup(c, cleanToken, request.AutoGroups.Groups, ownerGroup) {
 				return
 			}
 		}
@@ -434,7 +444,7 @@ func UpdateToken(c *gin.Context) {
 			cleanToken.NextResetTime = model.CalcNextTokenResetTime(time.Unix(common.GetTimestamp(), 0), rp)
 		}
 	}
-	err = cleanToken.Update()
+	err := cleanToken.Update()
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -444,6 +454,20 @@ func UpdateToken(c *gin.Context) {
 		"message": "",
 		"data":    buildMaskedTokenResponse(cleanToken),
 	})
+}
+
+func UpdateToken(c *gin.Context) {
+	userId := c.GetInt("id")
+	request, ok := bindTokenRequest(c)
+	if !ok {
+		return
+	}
+	cleanToken, err := model.GetTokenByIds(request.Token.Id, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	applyTokenUpdate(c, request, c.Query("status_only") != "", cleanToken)
 }
 
 type TokenBatch struct {
@@ -546,4 +570,125 @@ func UpdateTokenChannelQuotas(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ---- 管理员令牌管理（跨用户）----
+// 仅提供列表/搜索/启停/编辑/删除能力，不提供查看他人密钥明文的端点。
+
+func adminTokenUserIdQuery(c *gin.Context) int {
+	userId, err := strconv.Atoi(c.Query("user_id"))
+	if err != nil || userId < 0 {
+		return 0
+	}
+	return userId
+}
+
+func AdminGetAllTokens(c *gin.Context) {
+	userId := adminTokenUserIdQuery(c)
+	pageInfo := common.GetPageQuery(c)
+	tokens, err := model.GetAllUserTokens(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	total, _ := model.CountUserTokens(userId)
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	common.ApiSuccess(c, pageInfo)
+}
+
+func AdminSearchTokens(c *gin.Context) {
+	userId := adminTokenUserIdQuery(c)
+	keyword := c.Query("keyword")
+	token := c.Query("token")
+
+	pageInfo := common.GetPageQuery(c)
+
+	tokens, total, err := model.SearchUserTokens(userId, keyword, token, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
+	common.ApiSuccess(c, pageInfo)
+}
+
+func AdminGetToken(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	token, err := model.GetTokenById(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildMaskedTokenResponse(token))
+}
+
+func AdminGetTokenAutoGroups(c *gin.Context) {
+	userId, err := strconv.Atoi(c.Query("user_id"))
+	if err != nil || userId <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	userGroup, err := model.GetUserGroup(userId, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"groups":    service.GetUserAutoGroup(userGroup),
+		"max_count": setting.GetMaxTokenAutoGroups(),
+	})
+}
+
+func AdminUpdateToken(c *gin.Context) {
+	request, ok := bindTokenRequest(c)
+	if !ok {
+		return
+	}
+	cleanToken, err := model.GetTokenById(request.Token.Id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	applyTokenUpdate(c, request, c.Query("status_only") != "", cleanToken)
+}
+
+func AdminDeleteToken(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	token, err := model.GetTokenById(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := token.Delete(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
+}
+
+func AdminDeleteTokenBatch(c *gin.Context) {
+	tokenBatch := TokenBatch{}
+	if err := c.ShouldBindJSON(&tokenBatch); err != nil || len(tokenBatch.Ids) == 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	count, err := model.BatchDeleteTokens(tokenBatch.Ids, 0)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    count,
+	})
 }

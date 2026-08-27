@@ -251,6 +251,18 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.PUT("/:id/channel_quotas", controller.UpdateTokenChannelQuotas)
 		}
 
+		adminTokenRoute := apiRouter.Group("/token/admin")
+		adminTokenRoute.Use(middleware.AdminAuth())
+		{
+			adminTokenRoute.GET("/", controller.AdminGetAllTokens)
+			adminTokenRoute.GET("/search", middleware.SearchRateLimit(), controller.AdminSearchTokens)
+			adminTokenRoute.GET("/auto-groups", controller.AdminGetTokenAutoGroups)
+			adminTokenRoute.GET("/:id", controller.AdminGetToken)
+			adminTokenRoute.PUT("/", controller.AdminUpdateToken)
+			adminTokenRoute.DELETE("/:id/", controller.AdminDeleteToken)
+			adminTokenRoute.POST("/batch", controller.AdminDeleteTokenBatch)
+		}
+
 		usageRoute := apiRouter.Group("/usage")
 		usageRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{

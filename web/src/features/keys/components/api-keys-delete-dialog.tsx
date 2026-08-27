@@ -30,14 +30,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { deleteApiKey } from '../api'
+import { deleteAdminApiKey, deleteApiKey } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import { useApiKeys } from './api-keys-provider'
 
 export function ApiKeysDeleteDialog() {
   const { t } = useTranslation()
-  const { open, setOpen, currentRow, triggerRefresh } = useApiKeys()
+  const { open, setOpen, currentRow, triggerRefresh, adminMode } = useApiKeys()
+  const currentUserId = useAuthStore((s) => s.auth.user?.id ?? 0)
   const [isDeleting, setIsDeleting] = useState(false)
 
   const handleDelete = async () => {
@@ -45,7 +47,10 @@ export function ApiKeysDeleteDialog() {
 
     setIsDeleting(true)
     try {
-      const result = await deleteApiKey(currentRow.id)
+      const result =
+        adminMode && currentRow.user_id !== currentUserId
+          ? await deleteAdminApiKey(currentRow.id)
+          : await deleteApiKey(currentRow.id)
       if (result.success) {
         toast.success(t(SUCCESS_MESSAGES.API_KEY_DELETED))
         setOpen(null)

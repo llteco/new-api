@@ -52,8 +52,9 @@ import { resolveChatUrl, type ChatPreset } from '@/features/chat/lib/chat-links'
 import { sendToFluent } from '@/features/chat/lib/send-to-fluent'
 import { encodeChannelConnectionInfo } from '@/lib/channel-connection-info'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { updateApiKeyStatus } from '../api'
+import { updateApiKeyStatus, updateAdminApiKeyStatus } from '../api'
 import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import { apiKeySchema } from '../types'
 import { useApiKeys } from './api-keys-provider'
@@ -88,23 +89,27 @@ export function DataTableRowActions<TData>({
     resolveRealKey,
     resolvedKeys,
     loadingKeys,
+    adminMode: isAdminKeysMode,
   } = useApiKeys()
   const isEnabled = apiKey.status === API_KEY_STATUS.ENABLED
   const { chatPresets, serverAddress } = useChatPresets()
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
   const resolvedRealKey = resolvedKeys[apiKey.id]
   const isRealKeyLoading = Boolean(loadingKeys[apiKey.id])
-
+  const currentUserId = useAuthStore((s) => s.auth.user?.id ?? 0)
+  // 其他用户的密钥不提供任何明文访问（复制/连接信息/CC 切换/聊天预设）
+  const isOwnKey = apiKey.user_id === currentUserId
+  const isAdminManaged = isAdminKeysMode && !isOwnKey
   const hasChatPresets = chatPresets.length > 0
   const toggleLabel = isEnabled ? t('Disable') : t('Enable')
 
   const handleMenuOpenChange = useCallback(
     (open: boolean) => {
-      if (open && !resolvedRealKey && !isRealKeyLoading) {
+      if (open && isOwnKey && !resolvedRealKey && !isRealKeyLoading) {
         void resolveRealKey(apiKey.id)
       }
     },
-    [apiKey.id, isRealKeyLoading, resolvedRealKey, resolveRealKey]
+    [apiKey.id, isOwnKey, isRealKeyLoading, resolvedRealKey, resolveRealKey]
   )
 
   const getCachedRealKey = useCallback(() => {
@@ -165,7 +170,9 @@ export function DataTableRowActions<TData>({
 
     setIsTogglingStatus(true)
     try {
-      const result = await updateApiKeyStatus(apiKey.id, newStatus)
+      const result = isAdminManaged
+        ? await updateAdminApiKeyStatus(apiKey.id, newStatus)
+        : await updateApiKeyStatus(apiKey.id, newStatus)
       if (result.success) {
         const message = isEnabled
           ? t(SUCCESS_MESSAGES.API_KEY_DISABLED)
@@ -238,52 +245,58 @@ export function DataTableRowActions<TData>({
         modal={false}
         onOpenChange={handleMenuOpenChange}
       >
-        <DropdownMenuItem
-          onClick={async () => {
-            const realKey = getCachedRealKey()
-            if (!realKey) return
-            const ok = await copyToClipboard(realKey)
-            if (ok) toast.success(t('Copied'))
-          }}
-        >
-          {t('Copy Key')}
-          <DropdownMenuShortcut>
-            <Copy size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={async () => {
-            const realKey = getCachedRealKey()
-            if (!realKey) return
-            const connStr = encodeChannelConnectionInfo(
-              realKey,
-              getServerAddress()
-            )
-            const ok = await copyToClipboard(connStr)
-            if (ok) toast.success(t('Copied'))
-          }}
-        >
-          {t('Copy Connection Info')}
-          <DropdownMenuShortcut>
-            <Link size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={async () => {
-            const realKey = await resolveRealKey(apiKey.id)
-            if (!realKey) return
-            setResolvedKey(realKey)
-            setCurrentRow(apiKey)
-            setOpen('cc-switch')
-          }}
-        >
-          {t('CC Switch')}
-          <DropdownMenuShortcut>
-            <ArrowRightLeft size={16} />
-          </DropdownMenuShortcut>
-        </DropdownMenuItem>
-        {hasChatPresets && (
+        {isOwnKey &&(
+          <DropdownMenuItem
+            onClick={async () => {
+              const realKey = getCachedRealKey()
+              if (!realKey) return
+              const ok = await copyToClipboard(realKey)
+              if (ok) toast.success(t('Copied'))
+            }}
+          >
+            {t('Copy Key')}
+            <DropdownMenuShortcut>
+              <Copy size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
+        {isOwnKey &&(
+          <DropdownMenuItem
+            onClick={async () => {
+              const realKey = getCachedRealKey()
+              if (!realKey) return
+              const connStr = encodeChannelConnectionInfo(
+                realKey,
+                getServerAddress()
+              )
+              const ok = await copyToClipboard(connStr)
+              if (ok) toast.success(t('Copied'))
+            }}
+          >
+            {t('Copy Connection Info')}
+            <DropdownMenuShortcut>
+              <Link size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
+        {isOwnKey &&<DropdownMenuSeparator />}
+        {isOwnKey &&(
+          <DropdownMenuItem
+            onClick={async () => {
+              const realKey = await resolveRealKey(apiKey.id)
+              if (!realKey) return
+              setResolvedKey(realKey)
+              setCurrentRow(apiKey)
+              setOpen('cc-switch')
+            }}
+          >
+            {t('CC Switch')}
+            <DropdownMenuShortcut>
+              <ArrowRightLeft size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+        )}
+        {isOwnKey &&hasChatPresets && (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger>{t('Chat')}</DropdownMenuSubTrigger>
             <DropdownMenuSubContent>

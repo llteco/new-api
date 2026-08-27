@@ -108,10 +108,14 @@ func (token *Token) GetIpLimits() []string {
 	return ipLimits
 }
 
+// userId <= 0 表示不过滤用户（管理员查看全部）
 func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
 	var tokens []*Token
-	var err error
-	err = DB.Where("user_id = ?", userId).Order("id desc").Limit(num).Offset(startIdx).Find(&tokens).Error
+	query := DB.Model(&Token{})
+	if userId > 0 {
+		query = query.Where("user_id = ?", userId)
+	}
+	err := query.Order("id desc").Limit(num).Offset(startIdx).Find(&tokens).Error
 	return tokens, err
 }
 
@@ -188,7 +192,11 @@ func SearchUserTokens(userId int, keyword string, token string, offset int, limi
 		}
 	}
 
-	baseQuery := DB.Model(&Token{}).Where("user_id = ?", userId)
+	baseQuery := DB.Model(&Token{})
+	// userId > 0 时限定用户；管理员跨用户搜索时不过滤
+	if userId > 0 {
+		baseQuery = baseQuery.Where("user_id = ?", userId)
+	}
 
 	// 非空才加 LIKE 条件，空则跳过（不过滤该字段）
 	if keyword != "" {
@@ -441,14 +449,20 @@ func decreaseTokenQuota(id int, quota int) (err error) {
 	return err
 }
 
-// CountUserTokens returns total number of tokens for the given user, used for pagination
+// CountUserTokens returns total number of tokens for the given user, used for pagination.
+// userId <= 0 表示统计全部用户（管理员视图）。
 func CountUserTokens(userId int) (int64, error) {
 	var total int64
-	err := DB.Model(&Token{}).Where("user_id = ?", userId).Count(&total).Error
+	query := DB.Model(&Token{})
+	if userId > 0 {
+		query = query.Where("user_id = ?", userId)
+	}
+	err := query.Count(&total).Error
 	return total, err
 }
 
-// BatchDeleteTokens 删除指定用户的一组令牌，返回成功删除数量
+// BatchDeleteTokens 删除指定用户的一组令牌，返回成功删除数量。
+// userId <= 0 表示不限用户（管理员批量删除）。
 func BatchDeleteTokens(ids []int, userId int) (int, error) {
 	if len(ids) == 0 {
 		return 0, errors.New("ids 不能为空！")
@@ -456,8 +470,17 @@ func BatchDeleteTokens(ids []int, userId int) (int, error) {
 
 	tx := DB.Begin()
 
+	// gorm 语句执行后不可复用，两次查询各自构建条件
+	scopeTokens := func() *gorm.DB {
+		query := tx.Where("id IN (?)", ids)
+		if userId > 0 {
+			query = query.Where("user_id = ?", userId)
+		}
+		return query
+	}
+
 	var tokens []Token
-	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Find(&tokens).Error; err != nil {
+	if err := scopeTokens().Find(&tokens).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}
@@ -465,7 +488,7 @@ func BatchDeleteTokens(ids []int, userId int) (int, error) {
 		common.SysLog("failed to invalidate token cache before batch delete: " + err.Error())
 	}
 
-	if err := tx.Where("user_id = ? AND id IN (?)", userId, ids).Delete(&Token{}).Error; err != nil {
+	if err := scopeTokens().Delete(&Token{}).Error; err != nil {
 		tx.Rollback()
 		return 0, err
 	}
