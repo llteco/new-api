@@ -578,3 +578,32 @@ func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {
 		t.Fatalf("unauthorized key response leaked raw token key: %s", unauthorizedRecorder.Body.String())
 	}
 }
+
+func TestAdminGetTokenKeyReturnsOtherUsersFullKey(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "admin-viewed-token", "adminView312token456")
+
+	adminCtx, adminRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/admin/"+strconv.Itoa(token.Id)+"/key", nil, 99)
+	adminCtx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(token.Id)}}
+	AdminGetTokenKey(adminCtx)
+
+	adminResponse := decodeAPIResponse(t, adminRecorder)
+	if !adminResponse.Success {
+		t.Fatalf("expected admin key fetch to succeed, got message: %s", adminResponse.Message)
+	}
+	var keyData tokenKeyResponse
+	if err := common.Unmarshal(adminResponse.Data, &keyData); err != nil {
+		t.Fatalf("failed to decode token key response: %v", err)
+	}
+	if keyData.Key != token.GetFullKey() {
+		t.Fatalf("expected full key %q, got %q", token.GetFullKey(), keyData.Key)
+	}
+
+	missingCtx, missingRecorder := newAuthenticatedContext(t, http.MethodPost, "/api/token/admin/9999/key", nil, 99)
+	missingCtx.Params = gin.Params{{Key: "id", Value: "9999"}}
+	AdminGetTokenKey(missingCtx)
+	missingResponse := decodeAPIResponse(t, missingRecorder)
+	if missingResponse.Success {
+		t.Fatalf("expected missing token fetch to fail")
+	}
+}

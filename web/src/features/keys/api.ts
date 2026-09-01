@@ -117,17 +117,43 @@ export async function fetchTokenKey(
   const res = await api.post(`/api/token/${id}/key`)
   return res.data
 }
-
 // Batch fetch real (unmasked) keys for multiple tokens
-export async function fetchTokenKeysBatch(ids: number[]): Promise<{
-  success: boolean
-  message?: string
-  data?: { keys: Record<number, string> }
-}> {
-  const res = await api.post('/api/token/batch/keys', { ids })
-  return res.data
-}
+	export async function fetchTokenKeysBatch(ids: number[]): Promise<{
+		success: boolean
+		message?: string
+		data?: {
+			keys: Record<number, string>
+		}
+	}> {
+		const res = await api.post('/api/token/batch/keys', { ids })
+		return res.data
+	}
 
+	// Admin fetch the real (unmasked) key for any user's token by ID
+	export async function fetchTokenKeyAdmin(
+		id: number
+	): Promise<{
+		success: boolean
+		message?: string
+		data?: {
+			key: string
+		}
+	}> {
+		const res = await api.post(`/api/token/admin/${id}/key`)
+		return res.data
+	}
+
+	// Admin batch fetch real (unmasked) keys for any users' tokens
+	export async function fetchTokenKeysBatchAdmin(ids: number[]): Promise<{
+		success: boolean
+		message?: string
+		data?: {
+			keys: Record<number, string>
+		}
+	}> {
+		const res = await api.post('/api/token/admin/batch/keys', { ids })
+		return res.data
+	}
 // ============================================================================
 // Admin API Key Management (cross-user, no plaintext key access)
 // ============================================================================

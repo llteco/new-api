@@ -516,6 +516,46 @@ func GetTokenKeysBatch(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{"keys": keysMap})
 }
 
+func AdminGetTokenKey(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	token, err := model.GetTokenById(id)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgTokenGetInfoFailed)
+		return
+	}
+	recordManageAudit(c, "token.key_view", map[string]interface{}{
+		"id":   id,
+		"name": token.Name,
+	})
+	common.ApiSuccess(c, gin.H{"key": token.GetFullKey()})
+}
+
+func AdminGetTokenKeysBatch(c *gin.Context) {
+	tokenBatch := TokenBatch{}
+	if err := c.ShouldBindJSON(&tokenBatch); err != nil || len(tokenBatch.Ids) == 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if len(tokenBatch.Ids) > 100 {
+		common.ApiErrorI18n(c, i18n.MsgBatchTooMany, map[string]any{"Max": 100})
+		return
+	}
+	tokens, err := model.GetTokenKeysByIds(tokenBatch.Ids, 0)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	keysMap := make(map[int]string)
+	for _, t := range tokens {
+		keysMap[t.Id] = t.GetFullKey()
+	}
+	common.ApiSuccess(c, gin.H{"keys": keysMap})
+}
+
 func GetTokenChannelQuotas(c *gin.Context) {
 	tokenId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
