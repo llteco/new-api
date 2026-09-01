@@ -225,6 +225,132 @@ function reassembleClaudeMessage(chunks: SseChunk[]): ClaudeMessage | null {
   return message
 }
 
+interface OpenAiToolCall {
+  id?: string
+  type?: string
+  fnName: string
+  fnArgs: string
+}
+
+interface OpenAiChoice {
+  index: number
+  role: string
+  content?: string
+  reasoning?: string
+  reasoningKey?: string
+  toolCalls: Map<number, OpenAiToolCall>
+  finishReason?: string
+}
+
+/**
+ * Merge chat.completion.chunk stream events into the equivalent
+ * non-stream chat.completion. Returns null for non-OpenAI payloads.
+ */
+function reassembleOpenAiChunks(chunks: SseChunk[]): SseChunk | null {
+  if (!chunks.some((c) => c.object === 'chat.completion.chunk')) {
+    return null
+  }
+  const message: SseChunk = { object: 'chat.completion' }
+  const choices = new Map<number, OpenAiChoice>()
+  const choiceOf = (index: number): OpenAiChoice => {
+    let choice = choices.get(index)
+    if (!choice) {
+      choice = { index, role: 'assistant', toolCalls: new Map() }
+      choices.set(index, choice)
+    }
+    return choice
+  }
+  for (const chunk of chunks) {
+    for (const key of ['id', 'created', 'model', 'system_fingerprint']) {
+      if (message[key] === undefined && chunk[key] !== undefined) {
+        message[key] = chunk[key]
+      }
+    }
+    if (isRecord(chunk.usage) && Object.keys(chunk.usage).length > 0) {
+      message.usage = { ...chunk.usage }
+    }
+    if (!Array.isArray(chunk.choices)) {
+      continue
+    }
+    for (const raw of chunk.choices) {
+      if (!isRecord(raw)) {
+        continue
+      }
+      const choice = choiceOf(Number(raw.index) || 0)
+      if (typeof raw.finish_reason === 'string') {
+        choice.finishReason = raw.finish_reason
+      }
+      const delta = isRecord(raw.delta) ? raw.delta : {}
+      if (typeof delta.role === 'string') {
+        choice.role = delta.role
+      }
+      if (typeof delta.content === 'string') {
+        choice.content = (choice.content ?? '') + delta.content
+      }
+      for (const key of ['reasoning_content', 'reasoning']) {
+        const value = delta[key]
+        if (typeof value === 'string' && value) {
+          choice.reasoningKey = key
+          choice.reasoning = (choice.reasoning ?? '') + value
+        }
+      }
+      if (!Array.isArray(delta.tool_calls)) {
+        continue
+      }
+      for (const rawCall of delta.tool_calls) {
+        if (!isRecord(rawCall)) {
+          continue
+        }
+        const idx = Number(rawCall.index) || 0
+        let call = choice.toolCalls.get(idx)
+        if (!call) {
+          call = { fnName: '', fnArgs: '' }
+          choice.toolCalls.set(idx, call)
+        }
+        if (typeof rawCall.id === 'string') {
+          call.id = rawCall.id
+        }
+        if (typeof rawCall.type === 'string') {
+          call.type = rawCall.type
+        }
+        const fn = isRecord(rawCall.function) ? rawCall.function : {}
+        if (typeof fn.name === 'string') {
+          call.fnName += fn.name
+        }
+        if (typeof fn.arguments === 'string') {
+          call.fnArgs += fn.arguments
+        }
+      }
+    }
+  }
+  message.choices = [...choices.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, choice]) => {
+      const msg: SseChunk = { role: choice.role }
+      if (choice.content !== undefined) {
+        msg.content = choice.content
+      }
+      if (choice.reasoning !== undefined) {
+        msg[choice.reasoningKey ?? 'reasoning_content'] = choice.reasoning
+      }
+      if (choice.toolCalls.size > 0) {
+        msg.tool_calls = [...choice.toolCalls.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([, call]) => ({
+            id: call.id,
+            type: call.type,
+            function: { name: call.fnName, arguments: call.fnArgs },
+          }))
+      }
+      return {
+        index: choice.index,
+        message: msg,
+        finish_reason: choice.finishReason,
+      }
+    })
+  return message
+}
+
 /**
  * Line-break and indent a JSON-like body that failed to parse (capture was
  * truncated mid-JSON). Whitespace outside strings is re-emitted by structure;
@@ -292,6 +418,10 @@ export function formatChatLogBody(body: string): string {
     const claude = chunks.length > 0 ? reassembleClaudeMessage(chunks) : null
     if (claude) {
       return JSON.stringify(claude, null, 2)
+    }
+    const openai = chunks.length > 0 ? reassembleOpenAiChunks(chunks) : null
+    if (openai) {
+      return JSON.stringify(openai, null, 2)
     }
     if (chunks.length > 0) {
       return JSON.stringify(chunks, null, 2)

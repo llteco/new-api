@@ -81,11 +81,35 @@ const claudeSseFullBlocks = [
 ].join('\n')
 
 const openAiSse = [
-  'data: {"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}',
+  'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"},"finish_reason":null}]}',
   '',
-  'data: {"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" there"}}]}',
+  'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[{"index":0,"delta":{"content":" there"},"finish_reason":null}]}',
+  '',
+  'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+  '',
+  'data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2}}',
   '',
   'data: [DONE]',
+  '',
+].join('\n')
+
+const openAiToolCallSse = [
+  'data: {"id":"c2","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}',
+  '',
+  'data: {"id":"c2","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"city\\":"}}]},"finish_reason":null}]}',
+  '',
+  'data: {"id":"c2","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" \\"Beijing\\"}"}}]},"finish_reason":null}]}',
+  '',
+  'data: {"id":"c2","object":"chat.completion.chunk","model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}',
+  '',
+  'data: [DONE]',
+  '',
+].join('\n')
+
+const genericSse = [
+  'data: {"type":"status","progress":1}',
+  '',
+  'data: {"type":"status","progress":2}',
   '',
 ].join('\n')
 
@@ -144,12 +168,41 @@ describe('formatChatLogBody', () => {
     expect(msg.content[0].text).toBe('partial answ')
   })
 
-  test('pretty-prints non-Claude SSE chunks as an array', () => {
+  test('merges OpenAI stream chunks into a chat.completion', () => {
     const out = formatChatLogBody(openAiSse)
+    const msg = JSON.parse(out)
+    expect(msg).toMatchObject({
+      id: 'c1',
+      object: 'chat.completion',
+      model: 'gpt-4',
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content: 'Hi there' },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: { prompt_tokens: 10, completion_tokens: 2 },
+    })
+  })
+
+  test('merges OpenAI tool_call argument deltas', () => {
+    const out = formatChatLogBody(openAiToolCallSse)
+    const msg = JSON.parse(out)
+    expect(msg.choices[0].finish_reason).toBe('tool_calls')
+    expect(msg.choices[0].message.tool_calls[0]).toEqual({
+      id: 'call_1',
+      type: 'function',
+      function: { name: 'get_weather', arguments: '{"city": "Beijing"}' },
+    })
+  })
+
+  test('falls back to an array for non-chat SSE payloads', () => {
+    const out = formatChatLogBody(genericSse)
     const chunks = JSON.parse(out)
     expect(Array.isArray(chunks)).toBe(true)
     expect(chunks).toHaveLength(2)
-    expect(chunks[0].choices[0].delta.content).toBe('Hi')
+    expect(chunks[1].progress).toBe(2)
   })
 
   test('re-indents truncated JSON instead of returning one huge line', () => {

@@ -128,7 +128,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	var chatLogRecorder *service.ChatLogRecorder
 	if tok, terr := model.GetTokenByKey(relayInfo.TokenKey, false); terr == nil && tok.ChatLogEnabled {
-		chatLogRecorder = service.MaybeInstallChatLogCapture(c)
+		chatLogRecorder = service.MaybeInstallChatLogCapture(c, relayFormat)
 	}
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()

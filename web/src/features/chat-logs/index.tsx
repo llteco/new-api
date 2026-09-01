@@ -20,7 +20,7 @@ import { useTranslation } from 'react-i18next'
 
 import { SectionPageLayout } from '@/components/layout'
 
-import { ChatLogsTable } from './components/chat-logs-table'
+import { ChatSessionsTable } from './components/chat-sessions-table'
 
 export function ChatLogs() {
   const { t } = useTranslation()
@@ -31,7 +31,7 @@ export function ChatLogs() {
         <span className='truncate'>{t('Chat Logs')}</span>
       </SectionPageLayout.Title>
       <SectionPageLayout.Content>
-        <ChatLogsTable />
+        <ChatSessionsTable />
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )
