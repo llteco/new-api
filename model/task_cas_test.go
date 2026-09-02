@@ -60,7 +60,8 @@ func TestMain(m *testing.M) {
 		&SystemTask{},
 		&SystemTaskLock{},
 		&TokenChannelQuota{},
-		&ChatLog{},
+		&ChatSession{},
+		&ChatTurn{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -94,7 +95,8 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM system_task_locks")
 		DB.Exec("DELETE FROM system_tasks")
 		DB.Exec("DELETE FROM token_channel_quotas")
-		DB.Exec("DELETE FROM chat_logs")
+		DB.Exec("DELETE FROM chat_turns")
+		DB.Exec("DELETE FROM chat_sessions")
 	})
 }
 

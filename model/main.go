@@ -441,18 +441,21 @@ func InitChatLogDB() (err error) {
 }
 
 func migrateChatLogDB(dbType common.DatabaseType) error {
-	if err := CHATLOG_DB.AutoMigrate(&ChatLog{}); err != nil {
+	if err := CHATLOG_DB.AutoMigrate(&ChatSession{}, &ChatTurn{}); err != nil {
 		return err
 	}
 	if dbType == common.DatabaseTypeMySQL {
-		if err := CHATLOG_DB.Exec("ALTER TABLE chat_logs MODIFY COLUMN request_body LONGTEXT").Error; err != nil {
+		if err := CHATLOG_DB.Exec("ALTER TABLE chat_turns MODIFY COLUMN new_messages LONGTEXT").Error; err != nil {
 			return err
 		}
-		if err := CHATLOG_DB.Exec("ALTER TABLE chat_logs MODIFY COLUMN response_body LONGTEXT").Error; err != nil {
+		if err := CHATLOG_DB.Exec("ALTER TABLE chat_turns MODIFY COLUMN response_body LONGTEXT").Error; err != nil {
+			return err
+		}
+		if err := CHATLOG_DB.Exec("ALTER TABLE chat_sessions MODIFY COLUMN `system` LONGTEXT").Error; err != nil {
 			return err
 		}
 	}
-	return nil
+	return CHATLOG_DB.Exec("DROP TABLE IF EXISTS chat_logs").Error
 }
 
 func migrateClickHouseLogDB() error {

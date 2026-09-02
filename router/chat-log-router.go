@@ -9,6 +9,6 @@ import (
 func registerChatLogRoutes(apiRouter *gin.RouterGroup) {
 	chatLogRoute := apiRouter.Group("/chat_logs")
 	chatLogRoute.Use(middleware.AdminAuth())
-	chatLogRoute.GET("/", controller.AdminGetChatLogs)
-	chatLogRoute.GET("/:id", controller.AdminGetChatLogDetail)
+	chatLogRoute.GET("/sessions", controller.AdminGetChatSessions)
+	chatLogRoute.GET("/sessions/:id", controller.AdminGetChatSessionDetail)
 }

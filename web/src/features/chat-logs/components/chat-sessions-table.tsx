@@ -7,7 +7,7 @@ published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 
 This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
+but WITHOUT ANY WARRANTY; without even implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU Affero General Public License for more details.
 
@@ -30,17 +30,16 @@ import {
 } from '@/components/data-table'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { formatTimestampToDate } from '@/lib/format'
 
-import { chatLogsQueryKeys, getChatLogs } from '../api'
-import type { ChatLogMeta } from '../types'
-import { ChatLogDetailSheet } from './chat-log-detail-sheet'
+import { chatSessionsQueryKeys, getChatSessions } from '../api'
+import type { ChatSessionMeta } from '../types'
+import { SessionDetailSheet } from './session-detail-sheet'
 
 const route = getRouteApi('/_authenticated/chat-logs/')
 
-export function ChatLogsTable() {
+export function ChatSessionsTable() {
   const { t } = useTranslation()
   const [detailId, setDetailId] = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
@@ -65,6 +64,14 @@ export function ChatLogsTable() {
         deserialize: (value) =>
           typeof value === 'number' ? String(value) : '',
       },
+      {
+        columnId: 'user_id',
+        searchKey: 'user_id',
+        type: 'string',
+        serialize: (value) => (value ? Number(value) : undefined),
+        deserialize: (value) =>
+          typeof value === 'number' ? String(value) : '',
+      },
       { columnId: 'model_name', searchKey: 'model_name', type: 'string' },
     ],
   })
@@ -79,6 +86,19 @@ export function ChatLogsTable() {
   } = useDebouncedColumnFilter({
     columnFilters,
     columnId: 'token_id',
+    onColumnFiltersChange,
+  })
+
+  const {
+    value: userIdFilter,
+    inputValue: userIdInput,
+    onChange: onUserIdChange,
+    onCompositionStart: onUserIdCompositionStart,
+    onCompositionEnd: onUserIdCompositionEnd,
+    resetInput: resetUserIdInput,
+  } = useDebouncedColumnFilter({
+    columnFilters,
+    columnId: 'user_id',
     onColumnFiltersChange,
   })
 
@@ -100,15 +120,8 @@ export function ChatLogsTable() {
     setDetailOpen(true)
   }
 
-  const columns = useMemo<ColumnDef<ChatLogMeta>[]>(
+  const columns = useMemo<ColumnDef<ChatSessionMeta>[]>(
     () => [
-      {
-        accessorKey: 'created_at',
-        header: t('Created At'),
-        cell: ({ row }) =>
-          formatTimestampToDate(row.getValue('created_at') as number),
-        size: 170,
-      },
       {
         accessorKey: 'model_name',
         header: t('Model'),
@@ -127,51 +140,33 @@ export function ChatLogsTable() {
         size: 90,
       },
       {
-        accessorKey: 'user_id',
-        header: t('User ID'),
+        accessorKey: 'turn_count',
+        header: t('Turns'),
         meta: { mobileHidden: true },
-        cell: ({ row }) => row.getValue('user_id') as number,
+        cell: ({ row }) => row.getValue('turn_count') as number,
         size: 90,
       },
       {
-        accessorKey: 'channel_id',
-        header: t('Channel ID'),
+        accessorKey: 'message_count',
+        header: t('Messages'),
         meta: { mobileHidden: true },
-        cell: ({ row }) => row.getValue('channel_id') as number,
+        cell: ({ row }) => row.getValue('message_count') as number,
         size: 110,
       },
       {
-        accessorKey: 'is_stream',
-        header: t('Stream'),
-        meta: { mobileHidden: true },
-        cell: ({ row }) => {
-          const stream = row.getValue('is_stream') as boolean
-          return (
-            <Badge variant={stream ? 'default' : 'outline'}>
-              {stream ? t('Yes') : t('No')}
-            </Badge>
-          )
-        },
-        size: 90,
-      },
-      {
-        accessorKey: 'truncated',
-        header: t('Truncated'),
+        accessorKey: 'created_at',
+        header: t('Created At'),
         meta: { mobileHidden: true },
         cell: ({ row }) =>
-          (row.getValue('truncated') as boolean) ? (
-            <Badge variant='destructive'>{t('Truncated')}</Badge>
-          ) : (
-            <span className='text-muted-foreground text-xs'>-</span>
-          ),
-        size: 110,
+          formatTimestampToDate(row.getValue('created_at') as number),
+        size: 170,
       },
       {
-        accessorKey: 'status_code',
-        header: t('Status Code'),
-        meta: { mobileHidden: true },
-        cell: ({ row }) => row.getValue('status_code') as number,
-        size: 110,
+        accessorKey: 'last_active_at',
+        header: t('Last Active'),
+        cell: ({ row }) =>
+          formatTimestampToDate(row.getValue('last_active_at') as number),
+        size: 170,
       },
       {
         id: 'actions',
@@ -195,28 +190,25 @@ export function ChatLogsTable() {
     [t]
   )
 
+  const queryParams = {
+    token_id: tokenIdFilter ? Number(tokenIdFilter) : undefined,
+    user_id: userIdFilter ? Number(userIdFilter) : undefined,
+    model_name: modelNameFilter || undefined,
+    page: pagination.pageIndex + 1,
+    page_size: pagination.pageSize,
+  }
+
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: chatLogsQueryKeys.list({
-      token_id: tokenIdFilter ? Number(tokenIdFilter) : undefined,
-      model_name: modelNameFilter || undefined,
-      page: pagination.pageIndex + 1,
-      page_size: pagination.pageSize,
-    }),
-    queryFn: () =>
-      getChatLogs({
-        token_id: tokenIdFilter ? Number(tokenIdFilter) : undefined,
-        model_name: modelNameFilter || undefined,
-        page: pagination.pageIndex + 1,
-        page_size: pagination.pageSize,
-      }),
+    queryKey: chatSessionsQueryKeys.list(queryParams),
+    queryFn: () => getChatSessions(queryParams),
     placeholderData: (prev) => prev,
   })
 
-  const logs = data?.data ?? []
+  const sessions = data?.data ?? []
   const totalCount = data?.total ?? 0
 
   const { table } = useDataTable({
-    data: logs,
+    data: sessions,
     columns,
     totalCount,
     columnFilters,
@@ -238,7 +230,7 @@ export function ChatLogsTable() {
         isFetching={isFetching}
         emptyTitle={t('No Chat Logs Found')}
         emptyDescription={t('No conversation records available.')}
-        skeletonKeyPrefix='chat-log-skeleton'
+        skeletonKeyPrefix='chat-session-skeleton'
         toolbarProps={{
           customSearch: null,
           additionalSearch: (
@@ -253,6 +245,15 @@ export function ChatLogsTable() {
                 className='w-full sm:w-[140px]'
               />
               <Input
+                type='number'
+                placeholder={t('User ID')}
+                value={userIdInput}
+                onChange={onUserIdChange}
+                onCompositionStart={onUserIdCompositionStart}
+                onCompositionEnd={onUserIdCompositionEnd}
+                className='w-full sm:w-[140px]'
+              />
+              <Input
                 placeholder={t('Model')}
                 value={modelNameInput}
                 onChange={onModelNameChange}
@@ -263,16 +264,17 @@ export function ChatLogsTable() {
             </>
           ),
           hasAdditionalFilters:
-            !!tokenIdFilter || !!modelNameFilter,
+            !!tokenIdFilter || !!userIdFilter || !!modelNameFilter,
           onReset: () => {
             resetTokenIdInput()
+            resetUserIdInput()
             resetModelNameInput()
           },
           hideViewOptions: true,
         }}
       />
 
-      <ChatLogDetailSheet
+      <SessionDetailSheet
         open={detailOpen}
         onOpenChange={setDetailOpen}
         id={detailId}

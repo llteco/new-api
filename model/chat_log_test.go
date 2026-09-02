@@ -7,55 +7,90 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestChatLog_CreateAndQuery(t *testing.T) {
+func TestChatSession_CreateAndQuery(t *testing.T) {
 	truncateTables(t)
 	if !ChatLogDBEnabled() {
 		t.Skip("CHATLOG_DB not configured")
 	}
-	cl := &ChatLog{
-		TokenId: 1, UserId: 1, ChannelId: 5,
-		ModelName: "gpt-4", RequestId: "req-1",
-		RequestBody: `{"messages":[]}`, ResponseBody: `{"choices":[]}`,
-		IsStream: true, StatusCode: 200, UseTime: 2,
-	}
-	require.NoError(t, cl.Insert())
+	s := &ChatSession{TokenId: 1, UserId: 2, ModelName: "glm-5.3", PrefixHash: "a", MessageCount: 3, System: `"sys"`}
+	require.NoError(t, s.Insert())
+	require.NoError(t, (&ChatTurn{SessionId: s.Id, TurnIndex: 0, RequestId: "r1", NewMessages: `[{"role":"user","content":"hi"}]`, ResponseBody: `{}`}).Insert())
+	require.NoError(t, (&ChatTurn{SessionId: s.Id, TurnIndex: 1, RequestId: "r2", NewMessages: `[{"role":"user","content":"again"}]`, ResponseBody: `{}`}).Insert())
 
-	got, err := GetChatLogById(cl.Id)
+	got, err := GetChatSessionById(s.Id)
 	require.NoError(t, err)
-	assert.Equal(t, "gpt-4", got.ModelName)
-	assert.Equal(t, `{"messages":[]}`, got.RequestBody)
+	assert.Equal(t, 3, got.MessageCount)
 
-	list, total, err := SearchChatLogs(1, 0, 0, "", "", 1, 10)
+	turns, err := GetChatTurnsBySessionId(s.Id)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), total)
-	require.Len(t, list, 1)
-	assert.Equal(t, cl.Id, list[0].Id)
+	require.Len(t, turns, 2)
+	assert.Equal(t, 0, turns[0].TurnIndex)
+	assert.Equal(t, 1, turns[1].TurnIndex)
 }
 
-func TestChatLog_SearchFilters(t *testing.T) {
+func TestFindChatSessionByPrefixHashes_PrefersLongestMatch(t *testing.T) {
 	truncateTables(t)
 	if !ChatLogDBEnabled() {
 		t.Skip("CHATLOG_DB not configured")
 	}
-	require.NoError(t, (&ChatLog{TokenId: 1, UserId: 1, ChannelId: 5, ModelName: "gpt-4", RequestId: "a", RequestBody: "{}", ResponseBody: "{}"}).Insert())
-	require.NoError(t, (&ChatLog{TokenId: 1, UserId: 2, ChannelId: 6, ModelName: "claude", RequestId: "b", RequestBody: "{}", ResponseBody: "{}"}).Insert())
-	require.NoError(t, (&ChatLog{TokenId: 2, UserId: 1, ChannelId: 5, ModelName: "gpt-4", RequestId: "c", RequestBody: "{}", ResponseBody: "{}"}).Insert())
+	require.NoError(t, (&ChatSession{TokenId: 1, PrefixHash: "h2", MessageCount: 2}).Insert())
+	longer := &ChatSession{TokenId: 1, PrefixHash: "h5", MessageCount: 5}
+	require.NoError(t, longer.Insert())
+	require.NoError(t, (&ChatSession{TokenId: 2, PrefixHash: "h5", MessageCount: 9}).Insert()) // other token
 
-	list, total, err := SearchChatLogs(1, 0, 0, "", "", 1, 10)
+	got, err := FindChatSessionByPrefixHashes(1, []string{"h2", "h5", "h9"})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, 5, got.MessageCount)
+}
+
+func TestChatSession_Advance(t *testing.T) {
+	truncateTables(t)
+	if !ChatLogDBEnabled() {
+		t.Skip("CHATLOG_DB not configured")
+	}
+	s := &ChatSession{TokenId: 1, PrefixHash: "h2", MessageCount: 2}
+	require.NoError(t, s.Insert())
+	s.MessageCount = 4
+	s.PrefixHash = "h4"
+	require.NoError(t, s.Advance("glm-5.3", 123))
+	got, _ := GetChatSessionById(s.Id)
+	assert.Equal(t, 4, got.MessageCount)
+	assert.Equal(t, "h4", got.PrefixHash)
+	assert.Equal(t, 1, got.TurnCount)
+	assert.Equal(t, "glm-5.3", got.ModelName)
+	assert.Equal(t, int64(123), got.LastActiveAt)
+}
+
+func TestSearchChatSessions(t *testing.T) {
+	truncateTables(t)
+	if !ChatLogDBEnabled() {
+		t.Skip("CHATLOG_DB not configured")
+	}
+	require.NoError(t, (&ChatSession{TokenId: 1, UserId: 1, ModelName: "gpt-4", PrefixHash: "p1", MessageCount: 1, CreatedAt: 100, LastActiveAt: 100}).Insert())
+	require.NoError(t, (&ChatSession{TokenId: 1, UserId: 2, ModelName: "claude", PrefixHash: "p2", MessageCount: 2, CreatedAt: 200, LastActiveAt: 200}).Insert())
+	require.NoError(t, (&ChatSession{TokenId: 2, UserId: 1, ModelName: "gpt-4", PrefixHash: "p3", MessageCount: 3, CreatedAt: 300, LastActiveAt: 300}).Insert())
+
+	list, total, err := SearchChatSessions(1, 0, "", 1, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
 	assert.Len(t, list, 2)
 
-	list, total, err = SearchChatLogs(0, 0, 0, "gpt-4", "", 1, 10)
+	list, total, err = SearchChatSessions(0, 1, "", 1, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
 
-	list, total, err = SearchChatLogs(0, 0, 0, "", "b", 1, 10)
+	list, total, err = SearchChatSessions(0, 0, "gpt-4", 1, 10)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), total)
-	assert.Equal(t, "claude", list[0].ModelName)
+	assert.Equal(t, int64(2), total)
 
-	list, total, err = SearchChatLogs(0, 0, 0, "", "", 2, 10)
+	list, total, err = SearchChatSessions(0, 0, "", 1, 1)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), total)
+	require.Len(t, list, 1)
+	assert.Equal(t, int64(300), list[0].LastActiveAt, "ordered by last_active_at desc")
+
+	list, total, err = SearchChatSessions(0, 0, "", 2, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), total)
 	assert.Empty(t, list, "page 2 of 3 items is empty")

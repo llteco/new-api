@@ -26,6 +26,7 @@ import { useAuthStore } from '@/stores/auth-store'
 const chatLogsSearchSchema = z.object({
   page: z.number().optional().catch(1),
   token_id: z.number().optional().catch(undefined),
+  user_id: z.number().optional().catch(undefined),
   model_name: z.string().optional().catch(''),
 })
 
