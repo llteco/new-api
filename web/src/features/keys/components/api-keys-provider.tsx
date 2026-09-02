@@ -22,7 +22,7 @@ import { toast } from 'sonner'
 
 import useDialogState from '@/hooks/use-dialog'
 
-import { fetchTokenKey, fetchTokenKeysBatch } from '../api'
+import { fetchTokenKey, fetchTokenKeyAdmin, fetchTokenKeysBatch, fetchTokenKeysBatchAdmin } from '../api'
 import { ERROR_MESSAGES } from '../constants'
 import type { ApiKey, ApiKeysDialogType } from '../types'
 
@@ -89,7 +89,9 @@ export function ApiKeysProvider({
       const request = (async () => {
         setLoadingKeys((prev) => ({ ...prev, [id]: true }))
         try {
-          const res = await fetchTokenKey(id)
+          const res = adminMode
+            ? await fetchTokenKeyAdmin(id)
+            : await fetchTokenKey(id)
           if (res.success && res.data?.key) {
             const fullKey = `sk-${res.data.key}`
             setResolvedKeys((prev) => ({ ...prev, [id]: fullKey }))
@@ -113,7 +115,7 @@ export function ApiKeysProvider({
       pendingRequests.current[id] = request
       return request
     },
-    [resolvedKeys, t]
+    [resolvedKeys, t, adminMode]
   )
 
   const resolveRealKeysBatch = useCallback(
@@ -130,7 +132,9 @@ export function ApiKeysProvider({
       }
 
       try {
-        const res = await fetchTokenKeysBatch(uncachedIds)
+        const res = adminMode
+          ? await fetchTokenKeysBatchAdmin(uncachedIds)
+          : await fetchTokenKeysBatch(uncachedIds)
         if (res.success && res.data?.keys) {
           const newKeys: Record<number, string> = {}
           for (const [idStr, key] of Object.entries(res.data.keys)) {
@@ -159,7 +163,7 @@ export function ApiKeysProvider({
         }
       }
     },
-    [resolvedKeys, t]
+    [resolvedKeys, t, adminMode]
   )
 
   return (
