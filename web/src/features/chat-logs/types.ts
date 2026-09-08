@@ -45,21 +45,33 @@ export interface ChatTurn {
 export interface SessionDetail {
   session: ChatSessionMeta
   turns: ChatTurn[]
+  has_more: boolean
+  next_turn_id: number | null
 }
 
 export interface GetChatSessionsParams {
-  page?: number
-  page_size?: number
+  limit?: number
+  cursor?: string
   token_id?: number
   user_id?: number
   model_name?: string
+  start_ts?: number
+  end_ts?: number
 }
 
 export interface SessionListResponse {
   success: boolean
   message?: string
-  data?: ChatSessionMeta[]
-  total: number
+  data?: {
+    items: ChatSessionMeta[]
+    has_more: boolean
+    next_cursor: string | null
+  }
+}
+
+export interface GetSessionDetailParams {
+  limit?: number
+  before_id?: number
 }
 
 export interface SessionDetailResponse {

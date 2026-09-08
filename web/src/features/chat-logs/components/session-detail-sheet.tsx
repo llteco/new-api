@@ -7,7 +7,7 @@ published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 
 This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even implied warranty of
+but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU Affero General Public License for more details.
 
@@ -16,13 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
-import { Loader2 } from 'lucide-react'
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { ChevronUp, Loader2 } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CodeBlock } from '@/components/ai-elements/code-block'
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
+import { Button } from '@/components/ui/button'
 import {
   Sheet,
   SheetContent,
@@ -34,6 +35,8 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import { chatSessionsQueryKeys, getChatSessionDetail } from '../api'
 import { buildTranscript } from '../lib/transcript'
+
+const TURNS_PAGE_SIZE = 10
 
 export interface SessionDetailSheetProps {
   open: boolean
@@ -72,18 +75,33 @@ function toKeyedCodes(messages: unknown[]): KeyedCode[] {
 export function SessionDetailSheet(props: SessionDetailSheetProps) {
   const { t } = useTranslation()
 
-  const query = useQuery({
+  const query = useInfiniteQuery({
     queryKey: chatSessionsQueryKeys.detail(props.id ?? 0),
-    queryFn: () => getChatSessionDetail(props.id as number),
+    queryFn: ({ pageParam }) =>
+      getChatSessionDetail(props.id as number, {
+        limit: TURNS_PAGE_SIZE,
+        before_id: pageParam,
+      }),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (last) => last.data?.next_turn_id ?? undefined,
     enabled: props.open && props.id != null,
   })
 
-  const record = query.data?.data
+  const firstPage = query.data?.pages[0]
+  const record = firstPage?.data
+  // pages arrive newest-first (older pages are prepended); the transcript
+  // renders oldest → newest
   const turns = useMemo(
-    () => (record ? buildTranscript(record.turns) : []),
-    [record]
+    () =>
+      query.data
+        ? [...query.data.pages]
+            .reverse()
+            .flatMap((page) => page.data?.turns ?? [])
+        : [],
+    [query.data]
   )
-  const unavailable = !query.isLoading && (query.isError || !query.data?.success)
+  const transcript = useMemo(() => buildTranscript(turns), [turns])
+  const unavailable = !query.isLoading && (query.isError || !firstPage?.success)
 
   let body: React.ReactNode = null
   if (query.isLoading) {
@@ -96,7 +114,7 @@ export function SessionDetailSheet(props: SessionDetailSheetProps) {
   } else if (unavailable) {
     body = (
       <p className='text-muted-foreground py-12 text-center text-sm'>
-        {query.data?.message || t('No data')}
+        {firstPage?.message || t('No data')}
       </p>
     )
   } else if (record) {
@@ -105,12 +123,19 @@ export function SessionDetailSheet(props: SessionDetailSheetProps) {
         <div className='grid grid-cols-2 gap-3 sm:grid-cols-3'>
           <MetaItem
             label={t('Model')}
-            value={<span className='font-mono text-xs'>{record.session.model_name}</span>}
+            value={
+              <span className='font-mono text-xs'>
+                {record.session.model_name}
+              </span>
+            }
           />
           <MetaItem label={t('Token')} value={record.session.token_id} />
           <MetaItem label={t('User ID')} value={record.session.user_id} />
           <MetaItem label={t('Turns')} value={record.session.turn_count} />
-          <MetaItem label={t('Messages')} value={record.session.message_count} />
+          <MetaItem
+            label={t('Messages')}
+            value={record.session.message_count}
+          />
           <MetaItem
             label={t('Created At')}
             value={formatTimestampToDate(record.session.created_at)}
@@ -121,13 +146,29 @@ export function SessionDetailSheet(props: SessionDetailSheetProps) {
           />
         </div>
 
-        {turns.length === 0 ? (
+        {transcript.length === 0 ? (
           <p className='text-muted-foreground py-6 text-center text-sm'>
             {t('No data')}
           </p>
         ) : (
           <div className='flex flex-col gap-6'>
-            {turns.map((view) => (
+            {query.hasNextPage && (
+              <Button
+                variant='outline'
+                size='sm'
+                className='mx-auto gap-2'
+                disabled={query.isFetchingNextPage}
+                onClick={() => query.fetchNextPage()}
+              >
+                {query.isFetchingNextPage ? (
+                  <Loader2 className='size-4 animate-spin' />
+                ) : (
+                  <ChevronUp className='size-4' />
+                )}
+                {t('Load earlier turns')}
+              </Button>
+            )}
+            {transcript.map((view) => (
               <div key={view.turn.id} className='flex flex-col gap-2'>
                 <div className='flex items-center gap-2'>
                   <span className='text-foreground text-sm font-medium'>

@@ -7,7 +7,7 @@ published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 
 This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even implied warranty of
+but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU Affero General Public License for more details.
 
@@ -16,11 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Eye } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Eye, Loader2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -28,9 +28,9 @@ import {
   useDataTable,
   useDebouncedColumnFilter,
 } from '@/components/data-table'
-import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { chatSessionsQueryKeys, getChatSessions } from '../api'
@@ -39,21 +39,17 @@ import { SessionDetailSheet } from './session-detail-sheet'
 
 const route = getRouteApi('/_authenticated/chat-logs/')
 
+const SESSIONS_PAGE_SIZE = 20
+
 export function ChatSessionsTable() {
   const { t } = useTranslation()
   const [detailId, setDetailId] = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
+  const [pageIndex, setPageIndex] = useState(0)
 
-  const {
-    columnFilters,
-    onColumnFiltersChange,
-    pagination,
-    onPaginationChange,
-    ensurePageInRange,
-  } = useTableUrlState({
+  const { columnFilters, onColumnFiltersChange } = useTableUrlState({
     search: route.useSearch(),
     navigate: route.useNavigate(),
-    pagination: { defaultPage: 1, defaultPageSize: 10 },
     globalFilter: { enabled: false },
     columnFilters: [
       {
@@ -190,89 +186,130 @@ export function ChatSessionsTable() {
     [t]
   )
 
-  const queryParams = {
+  const filterParams = {
     token_id: tokenIdFilter ? Number(tokenIdFilter) : undefined,
     user_id: userIdFilter ? Number(userIdFilter) : undefined,
     model_name: modelNameFilter || undefined,
-    page: pagination.pageIndex + 1,
-    page_size: pagination.pageSize,
   }
 
-  const { data, isLoading, isFetching } = useQuery({
-    queryKey: chatSessionsQueryKeys.list(queryParams),
-    queryFn: () => getChatSessions(queryParams),
+  const query = useInfiniteQuery({
+    queryKey: chatSessionsQueryKeys.list(filterParams),
+    queryFn: ({ pageParam }) =>
+      getChatSessions({
+        ...filterParams,
+        limit: SESSIONS_PAGE_SIZE,
+        cursor: pageParam,
+      }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.data?.next_cursor ?? undefined,
     placeholderData: (prev) => prev,
   })
 
-  const sessions = data?.data ?? []
-  const totalCount = data?.total ?? 0
+  // filter changes restart the cursor list; drop the client-side page back to the first
+  useEffect(() => {
+    setPageIndex(0)
+  }, [tokenIdFilter, userIdFilter, modelNameFilter])
+
+  const sessions = useMemo(
+    () => query.data?.pages.flatMap((page) => page.data?.items ?? []) ?? [],
+    [query.data]
+  )
+  const isLoading = query.isLoading
+  const isFetching = query.isFetching
+  const hasNextPage = query.hasNextPage
+
+  const pagination = useMemo(
+    () => ({
+      pageIndex,
+      pageSize: SESSIONS_PAGE_SIZE,
+    }),
+    [pageIndex]
+  )
 
   const { table } = useDataTable({
     data: sessions,
     columns,
-    totalCount,
-    columnFilters,
+    totalCount: sessions.length,
     pagination,
+    onPaginationChange: (updater) => {
+      const next = typeof updater === 'function' ? updater(pagination) : updater
+      setPageIndex(next.pageIndex)
+    },
+    columnFilters,
     onColumnFiltersChange,
-    onPaginationChange,
-    manualPagination: true,
     manualFiltering: true,
     enableRowSelection: false,
-    ensurePageInRange,
   })
 
   return (
     <>
-      <DataTablePage
-        table={table}
-        columns={columns}
-        isLoading={isLoading}
-        isFetching={isFetching}
-        emptyTitle={t('No Chat Logs Found')}
-        emptyDescription={t('No conversation records available.')}
-        skeletonKeyPrefix='chat-session-skeleton'
-        toolbarProps={{
-          customSearch: null,
-          additionalSearch: (
-            <>
-              <Input
-                type='number'
-                placeholder={t('Token')}
-                value={tokenIdInput}
-                onChange={onTokenIdChange}
-                onCompositionStart={onTokenIdCompositionStart}
-                onCompositionEnd={onTokenIdCompositionEnd}
-                className='w-full sm:w-[140px]'
-              />
-              <Input
-                type='number'
-                placeholder={t('User ID')}
-                value={userIdInput}
-                onChange={onUserIdChange}
-                onCompositionStart={onUserIdCompositionStart}
-                onCompositionEnd={onUserIdCompositionEnd}
-                className='w-full sm:w-[140px]'
-              />
-              <Input
-                placeholder={t('Model')}
-                value={modelNameInput}
-                onChange={onModelNameChange}
-                onCompositionStart={onModelNameCompositionStart}
-                onCompositionEnd={onModelNameCompositionEnd}
-                className='w-full sm:w-[180px]'
-              />
-            </>
-          ),
-          hasAdditionalFilters:
-            !!tokenIdFilter || !!userIdFilter || !!modelNameFilter,
-          onReset: () => {
-            resetTokenIdInput()
-            resetUserIdInput()
-            resetModelNameInput()
-          },
-          hideViewOptions: true,
-        }}
-      />
+      <div className='flex flex-col gap-4'>
+        <DataTablePage
+          table={table}
+          columns={columns}
+          isLoading={isLoading}
+          isFetching={isFetching}
+          emptyTitle={t('No Chat Logs Found')}
+          emptyDescription={t('No conversation records available.')}
+          skeletonKeyPrefix='chat-session-skeleton'
+          toolbarProps={{
+            customSearch: null,
+            additionalSearch: (
+              <>
+                <Input
+                  type='number'
+                  placeholder={t('Token')}
+                  value={tokenIdInput}
+                  onChange={onTokenIdChange}
+                  onCompositionStart={onTokenIdCompositionStart}
+                  onCompositionEnd={onTokenIdCompositionEnd}
+                  className='w-full sm:w-[140px]'
+                />
+                <Input
+                  type='number'
+                  placeholder={t('User ID')}
+                  value={userIdInput}
+                  onChange={onUserIdChange}
+                  onCompositionStart={onUserIdCompositionStart}
+                  onCompositionEnd={onUserIdCompositionEnd}
+                  className='w-full sm:w-[140px]'
+                />
+                <Input
+                  placeholder={t('Model')}
+                  value={modelNameInput}
+                  onChange={onModelNameChange}
+                  onCompositionStart={onModelNameCompositionStart}
+                  onCompositionEnd={onModelNameCompositionEnd}
+                  className='w-full sm:w-[180px]'
+                />
+              </>
+            ),
+            hasAdditionalFilters:
+              !!tokenIdFilter || !!userIdFilter || !!modelNameFilter,
+            onReset: () => {
+              resetTokenIdInput()
+              resetUserIdInput()
+              resetModelNameInput()
+            },
+            hideViewOptions: true,
+          }}
+        />
+        {hasNextPage && (
+          <div className='flex justify-center'>
+            <Button
+              variant='outline'
+              className='gap-2'
+              disabled={query.isFetchingNextPage}
+              onClick={() => query.fetchNextPage()}
+            >
+              {query.isFetchingNextPage && (
+                <Loader2 className='size-4 animate-spin' />
+              )}
+              {t('Load more')}
+            </Button>
+          </div>
+        )}
+      </div>
 
       <SessionDetailSheet
         open={detailOpen}
