@@ -130,7 +130,7 @@ func normalizeClickHouseDSN(dsn string) string {
 	return parsed.String()
 }
 
-func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error) {
+func chooseDB(envName string, isLog bool, sqlitePath string) (*gorm.DB, common.DatabaseType, error) {
 	dsn := os.Getenv(envName)
 	if dsn != "" {
 		if isClickHouseDSN(dsn) {
@@ -152,7 +152,7 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 		}
 		if strings.HasPrefix(dsn, "local") {
 			common.SysLog("SQL_DSN not set, using SQLite as database")
-			db, err := gorm.Open(sqlite.Open(common.SQLitePath), newGormConfig(true))
+			db, err := gorm.Open(sqlite.Open(sqlitePath), newGormConfig(true))
 			return db, common.DatabaseTypeSQLite, err
 		}
 		// Use MySQL
@@ -170,12 +170,12 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 	}
 	// Use SQLite
 	common.SysLog("SQL_DSN not set, using SQLite as database")
-	db, err := gorm.Open(sqlite.Open(common.SQLitePath), newGormConfig(true))
+	db, err := gorm.Open(sqlite.Open(sqlitePath), newGormConfig(true))
 	return db, common.DatabaseTypeSQLite, err
 }
 
 func InitDB() (err error) {
-	db, dbType, err := chooseDB("SQL_DSN", false)
+	db, dbType, err := chooseDB("SQL_DSN", false, common.SQLitePath)
 	if err == nil {
 		common.SetMainDatabaseType(dbType)
 		if os.Getenv("LOG_SQL_DSN") == "" {
@@ -222,7 +222,7 @@ func InitLogDB() (err error) {
 		initCol()
 		return
 	}
-	db, dbType, err := chooseDB("LOG_SQL_DSN", true)
+	db, dbType, err := chooseDB("LOG_SQL_DSN", true, common.SQLitePath)
 	if err == nil {
 		common.SetLogDatabaseType(dbType)
 		initCol()
@@ -411,12 +411,38 @@ func migrateLOGDB() error {
 	return LOG_DB.AutoMigrate(&Log{})
 }
 
+// chatLogSQLiteDSN resolves the SQLite file for the chat-log database when
+// CHAT_LOG_SQL_DSN is "local" or "local:<path>". Unlike the main database,
+// the default is a dedicated chatlog.db file (WAL journal) so chat details
+// never bloat one-api.db. Precedence: "local:<path>" DSN suffix, then
+// CHAT_LOG_SQLITE_PATH, then the chatlog.db default.
+func chatLogSQLiteDSN(dsn string) string {
+	path := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(dsn, "local"), ":"))
+	if path == "" {
+		path = common.GetEnvOrDefaultString("CHAT_LOG_SQLITE_PATH", "chatlog.db")
+	}
+	return withSQLitePragmas(path)
+}
+
+func withSQLitePragmas(path string) string {
+	if strings.Contains(path, "?") {
+		return path
+	}
+	return path + "?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)"
+}
+
 func InitChatLogDB() (err error) {
 	if os.Getenv("CHAT_LOG_SQL_DSN") == "" {
 		common.SysLog("CHAT_LOG_SQL_DSN not set, chat-log detail storage disabled")
 		return nil
 	}
-	db, dbType, err := chooseDB("CHAT_LOG_SQL_DSN", false)
+	dsn := os.Getenv("CHAT_LOG_SQL_DSN")
+	sqlitePath := common.SQLitePath
+	if strings.HasPrefix(dsn, "local") {
+		sqlitePath = chatLogSQLiteDSN(dsn)
+		common.SysLog("using standalone SQLite file as chat-log detail database: " + sqlitePath)
+	}
+	db, dbType, err := chooseDB("CHAT_LOG_SQL_DSN", false, sqlitePath)
 	if err != nil {
 		common.FatalLog(err)
 		return err
@@ -434,6 +460,7 @@ func InitChatLogDB() (err error) {
 	sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
 	sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
 	sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+	InitChatLogHotCache()
 	if !common.IsMasterNode {
 		return nil
 	}
@@ -455,7 +482,56 @@ func migrateChatLogDB(dbType common.DatabaseType) error {
 			return err
 		}
 	}
-	return CHATLOG_DB.Exec("DROP TABLE IF EXISTS chat_logs").Error
+	if err := CHATLOG_DB.Exec("DROP TABLE IF EXISTS chat_logs").Error; err != nil {
+		return err
+	}
+	return dropLegacyChatTablesFromMainDB()
+}
+
+// dropLegacyChatTablesFromMainDB removes chat-detail tables that previous
+// versions created inside the main SQLite database (one-api.db) when
+// CHAT_LOG_SQL_DSN was "local". Existing chat-detail data is explicitly not
+// migrated — the new standalone database starts fresh. Only the three
+// chat-log tables are ever dropped; every other main-DB table is untouched.
+func dropLegacyChatTablesFromMainDB() error {
+	if !legacyChatTablesShareMainSQLite() {
+		return nil
+	}
+	for _, table := range []string{"chat_logs", "chat_turns", "chat_sessions"} {
+		if !DB.Migrator().HasTable(table) {
+			continue
+		}
+		if err := DB.Exec("DROP TABLE IF EXISTS `" + table + "`").Error; err != nil {
+			return err
+		}
+		common.SysLog("dropped legacy chat-log table `" + table + "` from main database")
+	}
+	return nil
+}
+
+// legacyChatTablesShareMainSQLite reports whether the main database could be
+// holding legacy chat-log tables AND the chat-log database now lives
+// elsewhere. The drop is restricted to a SQLite main DB plus a proven
+// different chat-log target, so an actively used chat-log database can never
+// be dropped by accident.
+func legacyChatTablesShareMainSQLite() bool {
+	if !common.UsingMainDatabase(common.DatabaseTypeSQLite) {
+		return false
+	}
+	if !common.UsingChatLogDatabase(common.DatabaseTypeSQLite) {
+		return true
+	}
+	dsn := os.Getenv("CHAT_LOG_SQL_DSN")
+	chatlogFile := chatLogSQLiteDSN(dsn)
+	return sqliteFileOf(chatlogFile) != sqliteFileOf(common.SQLitePath)
+}
+
+// sqliteFileOf strips DSN query options so file paths compare by location only.
+func sqliteFileOf(dsn string) string {
+	if i := strings.IndexByte(dsn, '?'); i >= 0 {
+		return dsn[:i]
+	}
+	return dsn
 }
 
 func migrateClickHouseLogDB() error {
@@ -754,8 +830,14 @@ func closeDB(db *gorm.DB) error {
 }
 
 func CloseDB() error {
-	if LOG_DB != DB {
+	if LOG_DB != nil && LOG_DB != DB {
 		err := closeDB(LOG_DB)
+		if err != nil {
+			return err
+		}
+	}
+	if CHATLOG_DB != nil && CHATLOG_DB != DB {
+		err := closeDB(CHATLOG_DB)
 		if err != nil {
 			return err
 		}

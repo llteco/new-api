@@ -73,28 +73,28 @@ func TestChatLogRecorder_PersistChainsTurns(t *testing.T) {
 
 	persistTurn("req-turn-1", turn1Body)
 	require.Eventually(t, func() bool {
-		sessions, total, err := model.SearchChatSessions(tokenId, 0, "", 1, 10)
-		return err == nil && total == 1 && len(sessions) == 1 &&
+		sessions, hasMore, err := model.ListChatSessions(model.ChatSessionFilter{TokenId: tokenId}, model.ChatSessionCursor{}, 10)
+		return err == nil && !hasMore && len(sessions) == 1 &&
 			sessions[0].TurnCount == 1 && sessions[0].MessageCount == 2
 	}, 2*time.Second, 20*time.Millisecond)
 
 	persistTurn("req-turn-2", turn2Body)
 	require.Eventually(t, func() bool {
-		sessions, total, err := model.SearchChatSessions(tokenId, 0, "", 1, 10)
-		return err == nil && total == 1 && len(sessions) == 1 &&
+		sessions, hasMore, err := model.ListChatSessions(model.ChatSessionFilter{TokenId: tokenId}, model.ChatSessionCursor{}, 10)
+		return err == nil && !hasMore && len(sessions) == 1 &&
 			sessions[0].TurnCount == 2 && sessions[0].MessageCount == 4
 	}, 2*time.Second, 20*time.Millisecond)
 
-	sessions, total, err := model.SearchChatSessions(tokenId, 0, "", 1, 10)
+	sessions, hasMore, err := model.ListChatSessions(model.ChatSessionFilter{TokenId: tokenId}, model.ChatSessionCursor{}, 10)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), total)
+	require.False(t, hasMore)
 	require.Len(t, sessions, 1)
 	s := sessions[0]
 	assert.Equal(t, 2, s.TurnCount)
 	assert.Equal(t, 4, s.MessageCount)
 	assert.Equal(t, `"You are helpful."`, s.System)
 
-	turns, err := model.GetChatTurnsBySessionId(s.Id)
+	turns, _, err := model.GetChatTurnsPage(s.Id, 0, 100)
 	require.NoError(t, err)
 	require.Len(t, turns, 2)
 	assert.Equal(t, 0, turns[0].TurnIndex)

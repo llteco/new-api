@@ -20,6 +20,7 @@ import { api } from '@/lib/api'
 
 import type {
   GetChatSessionsParams,
+  GetSessionDetailParams,
   SessionDetailResponse,
   SessionListResponse,
 } from './types'
@@ -32,9 +33,10 @@ export async function getChatSessions(
 }
 
 export async function getChatSessionDetail(
-  id: number
+  id: number,
+  params: GetSessionDetailParams = {}
 ): Promise<SessionDetailResponse> {
-  const res = await api.get(`/api/chat_logs/sessions/${id}`)
+  const res = await api.get(`/api/chat_logs/sessions/${id}`, { params })
   return res.data
 }
 

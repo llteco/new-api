@@ -1,16 +1,22 @@
 package model
 
 import (
+	"encoding/base64"
+	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/QuantumNous/new-api/common"
 )
 
 type ChatSession struct {
-	Id           int    `json:"id" gorm:"primaryKey"`
-	TokenId      int    `json:"token_id" gorm:"index;uniqueIndex:idx_chat_sessions_token_prefix"`
-	UserId       int    `json:"user_id" gorm:"index"`
-	ModelName    string `json:"model_name" gorm:"type:varchar(128)"`
-	System       string `json:"system" gorm:"type:text"`
-	TurnCount    int    `json:"turn_count"`
+	Id        int    `json:"id" gorm:"primaryKey"`
+	TokenId   int    `json:"token_id" gorm:"index;uniqueIndex:idx_chat_sessions_token_prefix"`
+	UserId    int    `json:"user_id" gorm:"index"`
+	ModelName string `json:"model_name" gorm:"type:varchar(128);index"`
+	System    string `json:"system" gorm:"type:text"`
+	TurnCount int    `json:"turn_count"`
+	// MessageCount is the number of request messages covered by PrefixHash.
 	MessageCount int    `json:"message_count"`
 	PrefixHash   string `json:"prefix_hash" gorm:"type:varchar(64);uniqueIndex:idx_chat_sessions_token_prefix"`
 	CreatedAt    int64  `json:"created_at" gorm:"bigint;index"`
@@ -33,13 +39,17 @@ func (s *ChatSession) Insert() error {
 	if s.LastActiveAt == 0 {
 		s.LastActiveAt = now
 	}
-	return CHATLOG_DB.Create(s).Error
+	if err := CHATLOG_DB.Create(s).Error; err != nil {
+		return err
+	}
+	chatLogCacheRecordSession(s)
+	return nil
 }
 
 type ChatTurn struct {
 	Id           int    `json:"id" gorm:"primaryKey"`
-	SessionId    int    `json:"session_id" gorm:"index"`
-	TurnIndex    int    `json:"turn_index"`
+	SessionId    int    `json:"session_id" gorm:"index:idx_chat_turns_session_turn,priority:1"`
+	TurnIndex    int    `json:"turn_index" gorm:"index:idx_chat_turns_session_turn,priority:2"`
 	RequestId    string `json:"request_id" gorm:"type:varchar(64);index"`
 	ModelName    string `json:"model_name" gorm:"type:varchar(128)"`
 	ChannelId    int    `json:"channel_id" gorm:"index"`
@@ -59,13 +69,11 @@ func (t *ChatTurn) Insert() error {
 	if t.CreatedAt == 0 {
 		t.CreatedAt = common.GetTimestamp()
 	}
-	return CHATLOG_DB.Create(t).Error
-}
-
-func GetChatTurnsBySessionId(sessionId int) ([]*ChatTurn, error) {
-	var turns []*ChatTurn
-	err := CHATLOG_DB.Where("session_id = ?", sessionId).Order("turn_index asc").Find(&turns).Error
-	return turns, err
+	if err := CHATLOG_DB.Create(t).Error; err != nil {
+		return err
+	}
+	chatLogCacheRecordTurn(t)
+	return nil
 }
 
 func FindChatSessionByPrefixHashes(tokenId int, hashes []string) (*ChatSession, error) {
@@ -82,45 +90,140 @@ func (s *ChatSession) Advance(modelName string, at int64) error {
 	s.TurnCount++
 	s.LastActiveAt = at
 	s.ModelName = modelName
-	return CHATLOG_DB.Model(s).Updates(map[string]any{
+	if err := CHATLOG_DB.Model(s).Updates(map[string]any{
 		"turn_count":     s.TurnCount,
 		"message_count":  s.MessageCount,
 		"prefix_hash":    s.PrefixHash,
 		"last_active_at": s.LastActiveAt,
 		"model_name":     s.ModelName,
-	}).Error
+	}).Error; err != nil {
+		return err
+	}
+	chatLogCacheAdvanceSession(s)
+	return nil
 }
 
-func SearchChatSessions(tokenId, userId int, modelName string, page, pageSize int) ([]*ChatSession, int64, error) {
-	if page < 1 {
-		page = 1
+// ChatSessionCursor is the keyset position of a session in the newest-first
+// (last_active_at desc, id desc) session list.
+type ChatSessionCursor struct {
+	LastActiveAt int64
+	Id           int
+}
+
+func (c ChatSessionCursor) Encode() string {
+	raw := fmt.Sprintf("%d:%d", c.LastActiveAt, c.Id)
+	return base64.URLEncoding.EncodeToString([]byte(raw))
+}
+
+func DecodeChatSessionCursor(s string) (ChatSessionCursor, error) {
+	if s == "" {
+		return ChatSessionCursor{}, nil
 	}
-	if pageSize < 1 || pageSize > 100 {
-		pageSize = 20
+	raw, err := base64.URLEncoding.DecodeString(s)
+	if err != nil {
+		return ChatSessionCursor{}, err
+	}
+	parts := strings.Split(string(raw), ":")
+	if len(parts) != 2 {
+		return ChatSessionCursor{}, fmt.Errorf("invalid chat session cursor")
+	}
+	at, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return ChatSessionCursor{}, err
+	}
+	id, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return ChatSessionCursor{}, err
+	}
+	return ChatSessionCursor{LastActiveAt: at, Id: id}, nil
+}
+
+// ChatSessionFilter narrows the session list. Zero values mean "no filter".
+type ChatSessionFilter struct {
+	TokenId   int
+	UserId    int
+	ModelName string
+	// StartTs/EndTs bound last_active_at (unix seconds), inclusive.
+	StartTs int64
+	EndTs   int64
+}
+
+func (f ChatSessionFilter) Empty() bool {
+	return f.TokenId == 0 && f.UserId == 0 && f.ModelName == "" && f.StartTs == 0 && f.EndTs == 0
+}
+
+// ListChatSessions returns one keyset page of sessions, newest first. An empty
+// cursor fetches the first page. hasMore reports whether older sessions may
+// follow, so callers never need a full-table COUNT.
+func ListChatSessions(filter ChatSessionFilter, cursor ChatSessionCursor, limit int) (sessions []*ChatSession, hasMore bool, err error) {
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
 	}
 	q := CHATLOG_DB.Model(&ChatSession{})
-	if tokenId > 0 {
-		q = q.Where("token_id = ?", tokenId)
+	if filter.TokenId > 0 {
+		q = q.Where("token_id = ?", filter.TokenId)
 	}
-	if userId > 0 {
-		q = q.Where("user_id = ?", userId)
+	if filter.UserId > 0 {
+		q = q.Where("user_id = ?", filter.UserId)
 	}
-	if modelName != "" {
-		q = q.Where("model_name = ?", modelName)
+	if filter.ModelName != "" {
+		q = q.Where("model_name = ?", filter.ModelName)
 	}
-	var total int64
-	if err := q.Count(&total).Error; err != nil {
-		return nil, 0, err
+	if filter.StartTs > 0 {
+		q = q.Where("last_active_at >= ?", filter.StartTs)
 	}
-	var sessions []*ChatSession
-	if err := q.Order("last_active_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&sessions).Error; err != nil {
-		return nil, 0, err
+	if filter.EndTs > 0 {
+		q = q.Where("last_active_at <= ?", filter.EndTs)
 	}
-	return sessions, total, nil
+	if cursor.Id > 0 || cursor.LastActiveAt > 0 {
+		// expanded row-value comparison so every supported database can use the
+		// last_active_at index (MySQL 5.7 cannot optimize (a,b) < (?,?))
+		q = q.Where("last_active_at < ? OR (last_active_at = ? AND id < ?)",
+			cursor.LastActiveAt, cursor.LastActiveAt, cursor.Id)
+	}
+	if err := q.Order("last_active_at desc, id desc").Limit(limit + 1).Find(&sessions).Error; err != nil {
+		return nil, false, err
+	}
+	if len(sessions) > limit {
+		sessions = sessions[:limit]
+		hasMore = true
+	}
+	return sessions, hasMore, nil
 }
 
 func GetChatSessionById(id int) (*ChatSession, error) {
 	var s ChatSession
 	err := CHATLOG_DB.First(&s, "id = ?", id).Error
 	return &s, err
+}
+
+// GetChatTurnsPage returns one page of a session's turns in ascending id
+// order. With beforeId == 0 it returns the newest page; otherwise the page
+// older than beforeId. hasMore reports whether even older turns exist.
+func GetChatTurnsPage(sessionId int, beforeId int, limit int) (turns []*ChatTurn, hasMore bool, err error) {
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	q := CHATLOG_DB.Where("session_id = ?", sessionId)
+	if beforeId > 0 {
+		q = q.Where("id < ?", beforeId)
+	}
+	if err := q.Order("id desc").Limit(limit + 1).Find(&turns).Error; err != nil {
+		return nil, false, err
+	}
+	if len(turns) > limit {
+		turns = turns[:limit]
+		hasMore = true
+	}
+	// newest-first from the DB; the transcript reads oldest-first
+	for i, j := 0, len(turns)-1; i < j; i, j = i+1, j-1 {
+		turns[i], turns[j] = turns[j], turns[i]
+	}
+	return turns, hasMore, nil
 }

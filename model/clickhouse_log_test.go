@@ -59,7 +59,7 @@ func TestChooseDBRejectsClickHouseForMainDatabase(t *testing.T) {
 	})
 	require.NoError(t, os.Setenv("SQL_DSN", "clickhouse://default:pass@localhost:9000/logs"))
 
-	db, dbType, err := chooseDB("SQL_DSN", false)
+	db, dbType, err := chooseDB("SQL_DSN", false, common.SQLitePath)
 	require.Error(t, err)
 	assert.Nil(t, db)
 	assert.Equal(t, common.DatabaseType(""), dbType)
