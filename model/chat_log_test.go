@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -329,7 +330,54 @@ func TestChatLogHotCache_ColdLoadAdmitsTurns(t *testing.T) {
 	require.Len(t, got, 2)
 }
 
-// TestChatLogHotCache_LongSessionNewestPageServesFromCache pins the fix for
+// TestChatLogHotCache_OversizedNewestTurnKeepsSessionCold pins the fix for
+// the PR review finding that admitting a page which silently skips an
+// oversized turn could later serve an incomplete "newest page" from cache.
+func TestChatLogHotCache_OversizedNewestTurnKeepsSessionCold(t *testing.T) {
+	truncateTables(t)
+	if !ChatLogDBEnabled() {
+		t.Skip("CHATLOG_DB not configured")
+	}
+	setupChatLogHotCache(t, 100, 64<<20, time.Hour)
+
+	s := &ChatSession{TokenId: 1, PrefixHash: "p", TurnCount: 3}
+	require.NoError(t, s.Insert())
+	small1 := &ChatTurn{SessionId: s.Id, TurnIndex: 0, NewMessages: "[]", ResponseBody: "{}"}
+	require.NoError(t, CHATLOG_DB.Create(small1).Error)
+	small2 := &ChatTurn{SessionId: s.Id, TurnIndex: 1, NewMessages: "[]", ResponseBody: "{}"}
+	require.NoError(t, CHATLOG_DB.Create(small2).Error)
+	big := &ChatTurn{SessionId: s.Id, TurnIndex: 2, NewMessages: "[]", ResponseBody: strings.Repeat("x", maxCachedChatTurnBodyBytes+1)}
+	require.NoError(t, CHATLOG_DB.Create(big).Error)
+
+	// cold view loads the newest page; the oversized newest turn makes the
+	// page uncacheable as a whole
+	page, hasMore, err := GetChatTurnsPage(s.Id, 0, 3)
+	require.NoError(t, err)
+	assert.False(t, hasMore)
+	require.Len(t, page, 3)
+	AdmitChatTurns(s.Id, page, 3)
+
+	// every follow-up view must cold-start instead of serving a newest page
+	// that silently omits the oversized turn
+	_, _, ok := GetHotChatTurns(s.Id, 3, 2)
+	assert.False(t, ok, "entry must not claim to hold the newest turns")
+	_, _, ok = GetHotChatTurns(s.Id, 3, 3)
+	assert.False(t, ok)
+
+	// a write-through oversized turn on an admitted entry also stays cold:
+	// covered only grows for cached turns, so it lags the DB count
+	fresh := &ChatSession{TokenId: 2, PrefixHash: "q", TurnCount: 1}
+	require.NoError(t, fresh.Insert())
+	first := &ChatTurn{SessionId: fresh.Id, TurnIndex: 0, NewMessages: "[]", ResponseBody: "{}"}
+	require.NoError(t, first.Insert())
+	_, _, ok = GetHotChatTurns(fresh.Id, 1, 1)
+	require.True(t, ok)
+	oversized := &ChatTurn{SessionId: fresh.Id, TurnIndex: 1, NewMessages: "[]", ResponseBody: strings.Repeat("x", maxCachedChatTurnBodyBytes+1)}
+	require.NoError(t, CHATLOG_DB.Create(oversized).Error)
+	_, _, ok = GetHotChatTurns(fresh.Id, 2, 1)
+	assert.False(t, ok, "covered lags the DB count after the oversized append")
+}
+
 // the PR review finding that a strictly count-based staleness check disabled
 // cache hits for long sessions: a cold-admitted newest page must serve
 // follow-up views while the DB turn count is unchanged.

@@ -42,9 +42,11 @@ type chatLogHotCache struct {
 
 // chatTurnCacheEntry holds the newest turns of one session. covered is the
 // DB turn count the entry is synced to: when covered equals the DB-fresh
-// TurnCount, the entry's turns are the session's newest. turns may hold
-// fewer rows than covered when oversized turns were skipped on admission —
-// such entries only serve pages fully inside the cached range.
+// TurnCount, the entry's turns reach up to the session's newest turn, though
+// the entry may hold only the newest page of a long session. Oversized turns
+// are never cached: admission skips the whole page when one appears, and a
+// skipped write-through turn leaves covered behind the DB count, so neither
+// path can serve an incomplete newest page.
 type chatTurnCacheEntry struct {
 	turns   []*ChatTurn // ascending by turn id
 	covered int
@@ -222,8 +224,8 @@ func (c *chatLogHotCache) getTurns(sessionId, totalTurns, limit int) (turns []*C
 		return nil, false, false // cache is behind the database: cold start
 	}
 	n := len(entry.turns)
-	// the entry may hold fewer turns than covered (oversized turns are never
-	// admitted); it can only serve pages fully inside the cached range
+	// a long-session entry may hold only the newest page; it cannot serve a
+	// page larger than what it cached
 	if n < limit && n < entry.covered {
 		return nil, false, false
 	}
@@ -238,7 +240,9 @@ func (c *chatLogHotCache) getTurns(sessionId, totalTurns, limit int) (turns []*C
 // admitTurns stores a cold-loaded newest page. totalTurns is the DB-fresh
 // session turn count, which anchors the entry: as long as the count is
 // unchanged, the entry is known to hold the session's newest turns — even
-// when it holds only the newest page of a long session.
+// when it holds only the newest page of a long session. Pages containing an
+// oversized turn are not cached at all: the entry would claim to hold the
+// newest turns while missing one inside the page.
 func (c *chatLogHotCache) admitTurns(sessionId int, turns []*ChatTurn, totalTurns int) {
 	if sessionId == 0 || len(turns) == 0 || totalTurns < len(turns) {
 		return
@@ -248,7 +252,7 @@ func (c *chatLogHotCache) admitTurns(sessionId int, turns []*ChatTurn, totalTurn
 	for _, t := range turns {
 		bodyBytes := len(t.NewMessages) + len(t.ResponseBody)
 		if bodyBytes > maxCachedChatTurnBodyBytes {
-			continue
+			return // keep the entry DB-served instead of incomplete
 		}
 		// the cache owns its copies: admitted turns are also handed to the
 		// HTTP handler for serialization
