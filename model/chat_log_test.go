@@ -226,6 +226,12 @@ func TestChatLogHotCache_ListRecentServesWindowAndRefreshes(t *testing.T) {
 	require.Len(t, sessions, 3)
 	assert.Equal(t, s3.Id, sessions[0].Id)
 
+	// the window (not full) holds more than one page: has_more must be true
+	sessions, hasMore, ok = ListRecentChatSessions(2)
+	require.True(t, ok)
+	require.Len(t, sessions, 2)
+	assert.True(t, hasMore, "window holds more than one page even when not full")
+
 	// advancing a cached session moves it back to the head with fresh metadata
 	s1.TurnCount = 6
 	s1.LastActiveAt = 400
@@ -285,6 +291,11 @@ func TestChatLogHotCache_TurnsServedFromCache(t *testing.T) {
 
 	// cache holds fewer turns than requested and fewer than exist: cold start
 	_, _, ok = GetHotChatTurns(s.Id, 8, 10)
+	assert.False(t, ok)
+
+	// cache covers the page size but is behind the DB total (another node
+	// appended turns): serving the "newest" page would be stale — cold start
+	_, _, ok = GetHotChatTurns(s.Id, 8, 3)
 	assert.False(t, ok)
 
 	// a session the cache never saw: cold start

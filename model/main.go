@@ -151,7 +151,7 @@ func chooseDB(envName string, isLog bool, sqlitePath string) (*gorm.DB, common.D
 			return db, common.DatabaseTypePostgreSQL, err
 		}
 		if strings.HasPrefix(dsn, "local") {
-			common.SysLog("SQL_DSN not set, using SQLite as database")
+			common.SysLog(envName + " is set to local, using SQLite as database")
 			db, err := gorm.Open(sqlite.Open(sqlitePath), newGormConfig(true))
 			return db, common.DatabaseTypeSQLite, err
 		}
@@ -169,7 +169,7 @@ func chooseDB(envName string, isLog bool, sqlitePath string) (*gorm.DB, common.D
 		return db, common.DatabaseTypeMySQL, err
 	}
 	// Use SQLite
-	common.SysLog("SQL_DSN not set, using SQLite as database")
+	common.SysLog(envName + " not set, using SQLite as database")
 	db, err := gorm.Open(sqlite.Open(sqlitePath), newGormConfig(true))
 	return db, common.DatabaseTypeSQLite, err
 }

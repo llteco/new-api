@@ -143,9 +143,11 @@ func (c *chatLogHotCache) recordTurn(t *ChatTurn) {
 	if i < len(turns) && turns[i].Id == t.Id {
 		return // already recorded
 	}
+	// the cache owns its copies: the caller's struct may be reused after insert
+	owned := *t
 	turns = append(turns, nil)
 	copy(turns[i+1:], turns[i:])
-	turns[i] = t
+	turns[i] = &owned
 	c.turns[t.SessionId] = turns
 	c.turnBytes[t.SessionId] += bodyBytes
 	c.totalTurnBytes += bodyBytes
@@ -162,7 +164,9 @@ func (c *chatLogHotCache) touchTurnsLocked(sessionId int) {
 }
 
 func (c *chatLogHotCache) evictTurnsLocked() {
-	for c.totalTurnBytes > c.maxTurnBytes && c.lru.Len() > 1 {
+	// evict down to the byte budget; the last session may go too, otherwise a
+	// single oversized entry could keep the cache above budget forever
+	for c.totalTurnBytes > c.maxTurnBytes && c.lru.Len() > 0 {
 		c.evictOldestTurnSessionLocked()
 	}
 }
@@ -181,9 +185,10 @@ func (c *chatLogHotCache) evictOldestTurnSessionLocked() {
 }
 
 // getTurns serves the newest `limit` turns of a session from cache when the
-// cache can prove it knows enough: it must hold at least `limit` turns, or
-// hold the complete session (checked against the DB-fresh totalTurns).
-// Returns ok=false when the caller must fall back to the database.
+// cache can prove it is current: the cached turn count must reach the
+// DB-fresh totalTurns (a lower count means another node appended turns this
+// cache has not seen, so the "newest" page would be stale). Returns ok=false
+// when the caller must fall back to the database.
 func (c *chatLogHotCache) getTurns(sessionId, totalTurns, limit int) (turns []*ChatTurn, hasMore bool, ok bool) {
 	if limit < 1 {
 		limit = 1
@@ -196,15 +201,15 @@ func (c *chatLogHotCache) getTurns(sessionId, totalTurns, limit int) (turns []*C
 	}
 	c.touchTurnsLocked(sessionId)
 	n := len(entry)
-	if n < limit && n < totalTurns {
-		return nil, false, false // older turns exist beyond the cache
+	if n < totalTurns {
+		return nil, false, false // cache is behind the database: cold start
 	}
 	if n >= limit {
 		turns = entry[n-limit:]
 	} else {
 		turns = entry
 	}
-	return turns, n > limit || n < totalTurns, true
+	return turns, n > limit, true
 }
 
 func (c *chatLogHotCache) admitTurns(sessionId int, turns []*ChatTurn) {
@@ -218,7 +223,10 @@ func (c *chatLogHotCache) admitTurns(sessionId int, turns []*ChatTurn) {
 		if bodyBytes > maxCachedChatTurnBodyBytes {
 			continue
 		}
-		kept = append(kept, t)
+		// the cache owns its copies: admitted turns are also handed to the
+		// HTTP handler for serialization
+		owned := *t
+		kept = append(kept, &owned)
 		bytes += bodyBytes
 	}
 	c.mu.Lock()
@@ -268,7 +276,9 @@ func (c *chatLogHotCache) listRecent(limit int) (sessions []*ChatSession, hasMor
 		copyS := *s
 		out[i] = &copyS
 	}
-	return out, len(sessions) > limit || c.windowFull, true
+	// hasMore must compare the pre-slice window length: the window may hold
+	// more entries than this page even when it is not full
+	return out, n > limit || c.windowFull, true
 }
 
 func (c *chatLogHotCache) refreshLocked() error {

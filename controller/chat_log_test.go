@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"testing"
 
@@ -73,6 +74,39 @@ func TestAdminGetChatSessions_ListMetaShape(t *testing.T) {
 	}
 	assert.Equal(t, "gpt-4", meta["model_name"])
 	assert.Equal(t, float64(2), meta["turn_count"])
+}
+
+func TestNormalizeChatLogPageLimit(t *testing.T) {
+	assert.Equal(t, 20, normalizeChatLogPageLimit(""))
+	assert.Equal(t, 20, normalizeChatLogPageLimit("0"))
+	assert.Equal(t, 20, normalizeChatLogPageLimit("-3"))
+	assert.Equal(t, 20, normalizeChatLogPageLimit("abc"))
+	assert.Equal(t, 1, normalizeChatLogPageLimit("1"))
+	assert.Equal(t, 50, normalizeChatLogPageLimit("50"))
+	assert.Equal(t, 100, normalizeChatLogPageLimit("100"))
+	assert.Equal(t, 100, normalizeChatLogPageLimit("5000"))
+}
+
+// TestAdminGetChatSessions_DefaultLimitOnHotPath pins the fix for the missing
+// limit param: the hot path must see the same default (20) as the DB path
+// instead of clamping to a single item.
+func TestAdminGetChatSessions_DefaultLimitOnHotPath(t *testing.T) {
+	setupChatLogTestDB(t)
+	t.Setenv("CHAT_LOG_HOT_CACHE_ENABLED", "true")
+	model.InitChatLogHotCache()
+	t.Cleanup(func() {
+		os.Setenv("CHAT_LOG_HOT_CACHE_ENABLED", "false")
+		model.InitChatLogHotCache()
+	})
+
+	for i := 0; i < 3; i++ {
+		s := &model.ChatSession{TokenId: i + 1, ModelName: "gpt-4", PrefixHash: fmt.Sprintf("h%d", i)}
+		require.NoError(t, s.Insert())
+	}
+
+	// no limit param at all: default page of 20, all three sessions returned
+	resp := listChatSessionsFor(t, "")
+	require.Len(t, resp.Data.Items, 3)
 }
 
 func TestAdminGetChatSessions_FiltersAndCursorPaging(t *testing.T) {
@@ -174,7 +208,7 @@ func TestAdminGetChatSessionDetail_TurnsPagedAndOrdered(t *testing.T) {
 	require.Equal(t, float64(turn2.Id), nextTurnId)
 
 	// older page via before_id
-	_, turns, hasMore, nextTurnId = fetch("?limit=1&before_id="+strconv.Itoa(turn2.Id))
+	_, turns, hasMore, nextTurnId = fetch("?limit=1&before_id=" + strconv.Itoa(turn2.Id))
 	require.Len(t, turns, 1)
 	assert.Equal(t, "r1", turns[0].RequestId)
 	assert.False(t, hasMore)

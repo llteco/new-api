@@ -27,6 +27,20 @@ func toChatSessionMeta(s *model.ChatSession) chatSessionMeta {
 	}
 }
 
+// normalizeChatLogPageLimit clamps the page-size query param once, before the
+// hot-cache and database paths branch, so both see the same default (20) and
+// ceiling (100).
+func normalizeChatLogPageLimit(raw string) int {
+	limit, _ := strconv.Atoi(raw)
+	if limit < 1 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return limit
+}
+
 // AdminGetChatSessions lists sessions newest-first using cursor pagination.
 // The unfiltered first page is served from the hot cache when possible; every
 // other query falls through to keyset queries on the chat-log database.
@@ -40,7 +54,7 @@ func AdminGetChatSessions(c *gin.Context) {
 	modelName := c.Query("model_name")
 	startTs, _ := strconv.ParseInt(c.Query("start_ts"), 10, 64)
 	endTs, _ := strconv.ParseInt(c.Query("end_ts"), 10, 64)
-	limit, _ := strconv.Atoi(c.Query("limit"))
+	limit := normalizeChatLogPageLimit(c.Query("limit"))
 	cursorStr := c.Query("cursor")
 
 	filter := model.ChatSessionFilter{
@@ -102,7 +116,7 @@ func AdminGetChatSessionDetail(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效 ID"})
 		return
 	}
-	limit, _ := strconv.Atoi(c.Query("limit"))
+	limit := normalizeChatLogPageLimit(c.Query("limit"))
 	beforeId, _ := strconv.Atoi(c.Query("before_id"))
 
 	session, err := model.GetChatSessionById(id)
