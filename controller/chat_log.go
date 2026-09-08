@@ -140,7 +140,7 @@ func AdminGetChatSessionDetail(c *gin.Context) {
 			return
 		}
 		if beforeId == 0 {
-			model.AdmitChatTurns(id, turns)
+			model.AdmitChatTurns(id, turns, session.TurnCount)
 		}
 	}
 

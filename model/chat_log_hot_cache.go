@@ -34,11 +34,21 @@ type chatLogHotCache struct {
 	windowFull   bool                 // window holds windowSize entries: older rows may exist in the DB
 	lastRefresh  time.Time
 
-	turns          map[int][]*ChatTurn // session id -> ascending by turn id
-	turnBytes      map[int]int
-	lru            *list.List // session ids, front = most recently used
+	turns          map[int]*chatTurnCacheEntry // session id -> entry
+	lru            *list.List                  // session ids, front = most recently used
 	lruElems       map[int]*list.Element
 	totalTurnBytes int
+}
+
+// chatTurnCacheEntry holds the newest turns of one session. covered is the
+// DB turn count the entry is synced to: when covered equals the DB-fresh
+// TurnCount, the entry's turns are the session's newest. turns may hold
+// fewer rows than covered when oversized turns were skipped on admission —
+// such entries only serve pages fully inside the cached range.
+type chatTurnCacheEntry struct {
+	turns   []*ChatTurn // ascending by turn id
+	covered int
+	bytes   int
 }
 
 // maxCachedChatTurnBodyBytes caps admission of a single turn's bodies; larger
@@ -74,8 +84,7 @@ func newChatLogHotCache(windowSize, maxTurnBytes int, refreshInterval time.Durat
 		maxTurnBytes:    maxTurnBytes,
 		refreshInterval: refreshInterval,
 		sessionsById:    make(map[int]*ChatSession),
-		turns:           make(map[int][]*ChatTurn),
-		turnBytes:       make(map[int]int),
+		turns:           make(map[int]*chatTurnCacheEntry),
 		lru:             list.New(),
 		lruElems:        make(map[int]*list.Element),
 	}
@@ -138,7 +147,12 @@ func (c *chatLogHotCache) recordTurn(t *ChatTurn) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	turns := c.turns[t.SessionId]
+	entry := c.turns[t.SessionId]
+	if entry == nil {
+		entry = &chatTurnCacheEntry{}
+		c.turns[t.SessionId] = entry
+	}
+	turns := entry.turns
 	i := sort.Search(len(turns), func(i int) bool { return turns[i].Id >= t.Id })
 	if i < len(turns) && turns[i].Id == t.Id {
 		return // already recorded
@@ -148,9 +162,13 @@ func (c *chatLogHotCache) recordTurn(t *ChatTurn) {
 	turns = append(turns, nil)
 	copy(turns[i+1:], turns[i:])
 	turns[i] = &owned
-	c.turns[t.SessionId] = turns
-	c.turnBytes[t.SessionId] += bodyBytes
+	entry.turns = turns
+	entry.bytes += bodyBytes
 	c.totalTurnBytes += bodyBytes
+	// this node just persisted one more turn, so whatever DB total the entry
+	// was synced to grew by exactly one; if the entry was already behind
+	// (other nodes wrote), the equality check in getTurns still fails safely
+	entry.covered++
 	c.touchTurnsLocked(t.SessionId)
 	c.evictTurnsLocked()
 }
@@ -179,16 +197,16 @@ func (c *chatLogHotCache) evictOldestTurnSessionLocked() {
 	sessionId := back.Value.(int)
 	c.lru.Remove(back)
 	delete(c.lruElems, sessionId)
-	c.totalTurnBytes -= c.turnBytes[sessionId]
-	delete(c.turnBytes, sessionId)
+	c.totalTurnBytes -= c.turns[sessionId].bytes
 	delete(c.turns, sessionId)
 }
 
 // getTurns serves the newest `limit` turns of a session from cache when the
-// cache can prove it is current: the cached turn count must reach the
-// DB-fresh totalTurns (a lower count means another node appended turns this
-// cache has not seen, so the "newest" page would be stale). Returns ok=false
-// when the caller must fall back to the database.
+// entry is provably current: entry.covered must equal the DB-fresh
+// totalTurns (otherwise some other node appended turns this cache has not
+// seen, and the "newest" page would be stale), and the cached range must
+// fully cover the requested page. Returns ok=false when the caller must
+// fall back to the database.
 func (c *chatLogHotCache) getTurns(sessionId, totalTurns, limit int) (turns []*ChatTurn, hasMore bool, ok bool) {
 	if limit < 1 {
 		limit = 1
@@ -200,20 +218,29 @@ func (c *chatLogHotCache) getTurns(sessionId, totalTurns, limit int) (turns []*C
 		return nil, false, false
 	}
 	c.touchTurnsLocked(sessionId)
-	n := len(entry)
-	if n < totalTurns {
+	if entry.covered != totalTurns {
 		return nil, false, false // cache is behind the database: cold start
 	}
-	if n >= limit {
-		turns = entry[n-limit:]
-	} else {
-		turns = entry
+	n := len(entry.turns)
+	// the entry may hold fewer turns than covered (oversized turns are never
+	// admitted); it can only serve pages fully inside the cached range
+	if n < limit && n < entry.covered {
+		return nil, false, false
 	}
-	return turns, n > limit, true
+	if n >= limit {
+		turns = entry.turns[n-limit:]
+	} else {
+		turns = entry.turns
+	}
+	return turns, entry.covered > limit, true
 }
 
-func (c *chatLogHotCache) admitTurns(sessionId int, turns []*ChatTurn) {
-	if sessionId == 0 || len(turns) == 0 {
+// admitTurns stores a cold-loaded newest page. totalTurns is the DB-fresh
+// session turn count, which anchors the entry: as long as the count is
+// unchanged, the entry is known to hold the session's newest turns — even
+// when it holds only the newest page of a long session.
+func (c *chatLogHotCache) admitTurns(sessionId int, turns []*ChatTurn, totalTurns int) {
+	if sessionId == 0 || len(turns) == 0 || totalTurns < len(turns) {
 		return
 	}
 	bytes := 0
@@ -231,17 +258,16 @@ func (c *chatLogHotCache) admitTurns(sessionId int, turns []*ChatTurn) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.replaceTurnsLocked(sessionId, kept, bytes)
+	c.replaceTurnsLocked(sessionId, kept, totalTurns, bytes)
 	c.evictTurnsLocked()
 }
 
-func (c *chatLogHotCache) replaceTurnsLocked(sessionId int, turns []*ChatTurn, bytes int) {
+func (c *chatLogHotCache) replaceTurnsLocked(sessionId int, turns []*ChatTurn, covered int, bytes int) {
 	c.touchTurnsLocked(sessionId)
-	if _, exists := c.turns[sessionId]; exists {
-		c.totalTurnBytes -= c.turnBytes[sessionId]
+	if old, exists := c.turns[sessionId]; exists {
+		c.totalTurnBytes -= old.bytes
 	}
-	c.turns[sessionId] = turns
-	c.turnBytes[sessionId] = bytes
+	c.turns[sessionId] = &chatTurnCacheEntry{turns: turns, covered: covered, bytes: bytes}
 	c.totalTurnBytes += bytes
 }
 
@@ -333,9 +359,10 @@ func GetHotChatTurns(sessionId, totalTurns, limit int) (turns []*ChatTurn, hasMo
 }
 
 // AdmitChatTurns stores a cold-loaded session page in the hot cache so
-// follow-up views of the same session are served from memory.
-func AdmitChatTurns(sessionId int, turns []*ChatTurn) {
+// follow-up views of the same session are served from memory. totalTurns is
+// the DB-fresh session turn count that anchors the entry's currency.
+func AdmitChatTurns(sessionId int, turns []*ChatTurn, totalTurns int) {
 	if chatLogHot != nil {
-		chatLogHot.admitTurns(sessionId, turns)
+		chatLogHot.admitTurns(sessionId, turns, totalTurns)
 	}
 }

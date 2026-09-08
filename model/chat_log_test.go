@@ -317,16 +317,67 @@ func TestChatLogHotCache_ColdLoadAdmitsTurns(t *testing.T) {
 	require.NoError(t, CHATLOG_DB.Create(t1).Error) // written by another node
 	require.NoError(t, CHATLOG_DB.Create(t2).Error)
 
-	// cold load path: DB page then admit
+	// cold load path: DB page then admit, anchored to the DB turn count
 	page, hasMore, err := GetChatTurnsPage(s.Id, 0, 20)
 	require.NoError(t, err)
 	assert.False(t, hasMore)
-	AdmitChatTurns(s.Id, page)
+	AdmitChatTurns(s.Id, page, 2)
 
 	got, hasMore, ok := GetHotChatTurns(s.Id, 2, 20)
 	require.True(t, ok)
 	assert.False(t, hasMore)
 	require.Len(t, got, 2)
+}
+
+// TestChatLogHotCache_LongSessionNewestPageServesFromCache pins the fix for
+// the PR review finding that a strictly count-based staleness check disabled
+// cache hits for long sessions: a cold-admitted newest page must serve
+// follow-up views while the DB turn count is unchanged.
+func TestChatLogHotCache_LongSessionNewestPageServesFromCache(t *testing.T) {
+	truncateTables(t)
+	if !ChatLogDBEnabled() {
+		t.Skip("CHATLOG_DB not configured")
+	}
+	setupChatLogHotCache(t, 100, 64<<20, time.Hour)
+
+	s := &ChatSession{TokenId: 1, PrefixHash: "p", TurnCount: 10}
+	require.NoError(t, s.Insert())
+	ids := make([]int, 0, 10)
+	for i := 0; i < 10; i++ {
+		turn := &ChatTurn{SessionId: s.Id, TurnIndex: i, NewMessages: "[]", ResponseBody: "{}"}
+		require.NoError(t, CHATLOG_DB.Create(turn).Error) // all written by another node
+		ids = append(ids, turn.Id)
+	}
+
+	// first view: cold start, only the newest page is loaded and admitted
+	page, hasMore, err := GetChatTurnsPage(s.Id, 0, 3)
+	require.NoError(t, err)
+	assert.True(t, hasMore)
+	AdmitChatTurns(s.Id, page, 10)
+
+	// second view of the same page must hit the cache, not the DB
+	got, hasMore, ok := GetHotChatTurns(s.Id, 10, 3)
+	require.True(t, ok)
+	assert.True(t, hasMore, "older turns exist beyond the admitted page")
+	require.Len(t, got, 3)
+	assert.Equal(t, ids[7], got[0].Id)
+	assert.Equal(t, ids[9], got[2].Id)
+
+	// another node appends a turn: the anchored count no longer matches, cold start
+	t11 := &ChatTurn{SessionId: s.Id, TurnIndex: 10, NewMessages: "[]", ResponseBody: "{}"}
+	require.NoError(t, CHATLOG_DB.Create(t11).Error)
+	_, _, ok = GetHotChatTurns(s.Id, 11, 3)
+	assert.False(t, ok, "stale entry after another node appended a turn")
+
+	// a write-through append on this node keeps an admitted entry current
+	AdmitChatTurns(s.Id, page, 10)
+	t12 := &ChatTurn{SessionId: s.Id, TurnIndex: 11, NewMessages: "[]", ResponseBody: "{}"}
+	require.NoError(t, t12.Insert())
+	got, hasMore, ok = GetHotChatTurns(s.Id, 11, 3)
+	require.True(t, ok)
+	assert.True(t, hasMore)
+	require.Len(t, got, 3)
+	assert.Equal(t, t12.Id, got[2].Id, "local append is served as the newest turn")
 }
 
 func TestChatLogHotCache_ByteBudgetEvictsLRU(t *testing.T) {
