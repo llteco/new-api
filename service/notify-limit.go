@@ -48,7 +48,8 @@ func startCleanupTask() {
 // CheckNotificationLimit checks if the user has exceeded their notification limit
 // Returns true if the user can send notification, false if limit exceeded
 func CheckNotificationLimit(userId int, notifyType string) (bool, error) {
-	if common.RedisEnabled {
+	// 后台通知协程可能在 Redis 初始化前/回收后执行，此时回落到内存限流
+	if common.RedisEnabled && common.RDB != nil {
 		return checkRedisLimit(userId, notifyType)
 	}
 	return checkMemoryLimit(userId, notifyType)

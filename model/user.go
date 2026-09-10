@@ -1334,6 +1334,10 @@ func DeltaUpdateUserQuota(id int, delta int) (err error) {
 //}
 
 func GetRootUser() (user *User) {
+	// 异步通知等后台任务可能在 DB 尚未初始化或已被回收后调用，此时视为无 root 用户
+	if DB == nil {
+		return &User{}
+	}
 	DB.Where("role = ?", common.RoleRootUser).First(&user)
 	return user
 }
