@@ -51,6 +51,147 @@ func TestUpdateChannelStatusPersistsMultiKeyState(t *testing.T) {
 	assert.Equal(t, 1, stored.ChannelInfo.MultiKeyPollingIndex)
 }
 
+func TestSyncMultiKeyChannelStatusDisablesWhenAllKeysDisabled(t *testing.T) {
+	channel := &Channel{
+		Id:     1,
+		Key:    "k1\nk2",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeySize:       2,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusManuallyDisabled, 1: common.ChannelStatusManuallyDisabled},
+		},
+	}
+
+	channel.SyncMultiKeyChannelStatus()
+
+	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+	assert.Equal(t, allKeysDisabledReason, channel.GetOtherInfo()["status_reason"])
+}
+
+func TestSyncMultiKeyChannelStatusDisablesWhenKeyListEmpty(t *testing.T) {
+	channel := &Channel{
+		Id:     2,
+		Key:    "",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 0,
+		},
+	}
+
+	channel.SyncMultiKeyChannelStatus()
+
+	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+}
+
+func TestSyncMultiKeyChannelStatusKeepsEnabledWhileKeysCooling(t *testing.T) {
+	channel := &Channel{
+		Id:     3,
+		Key:    "k1\nk2",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:            true,
+			MultiKeySize:          2,
+			MultiKeyStatusList:    map[int]int{0: common.ChannelStatusManuallyDisabled, 1: common.ChannelStatusTempDisabled},
+			MultiKeyCooldownUntil: map[int]int64{1: common.GetTimestamp() + 3600},
+		},
+	}
+
+	channel.SyncMultiKeyChannelStatus()
+
+	assert.Equal(t, common.ChannelStatusEnabled, channel.Status)
+}
+
+func TestSyncMultiKeyChannelStatusReenablesWhenKeyBecomesUsable(t *testing.T) {
+	channel := &Channel{
+		Id:        4,
+		Key:       "k1\nk2",
+		Status:    common.ChannelStatusAutoDisabled,
+		OtherInfo: `{"status_reason":"` + allKeysDisabledReason + `","status_time":123}`,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeySize:       2,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusManuallyDisabled},
+		},
+	}
+
+	channel.SyncMultiKeyChannelStatus()
+
+	assert.Equal(t, common.ChannelStatusEnabled, channel.Status)
+	assert.NotContains(t, channel.GetOtherInfo(), "status_reason")
+}
+
+func TestSyncMultiKeyChannelStatusLeavesUnrelatedDisabledStates(t *testing.T) {
+	manuallyDisabled := &Channel{
+		Id:     5,
+		Key:    "k1",
+		Status: common.ChannelStatusManuallyDisabled,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeySize:       1,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusManuallyDisabled},
+		},
+	}
+	manuallyDisabled.SyncMultiKeyChannelStatus()
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, manuallyDisabled.Status)
+
+	autoDisabledOtherReason := &Channel{
+		Id:        6,
+		Key:       "k1\nk2",
+		Status:    common.ChannelStatusAutoDisabled,
+		OtherInfo: `{"status_reason":"provider rejected key"}`,
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+		},
+	}
+	autoDisabledOtherReason.SyncMultiKeyChannelStatus()
+	assert.Equal(t, common.ChannelStatusAutoDisabled, autoDisabledOtherReason.Status)
+}
+
+func TestSyncMultiKeyChannelStatusFlowsToDbAndAbilities(t *testing.T) {
+	setupChannelStatusTest(t)
+
+	channel := &Channel{
+		Name:   "multi-key-sync",
+		Key:    "k1\nk2",
+		Status: common.ChannelStatusEnabled,
+		Models: "sync-model",
+		Group:  "default",
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyMode: constant.MultiKeyModeRandom,
+		},
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
+
+	// 禁用全部密钥后，渠道状态回算为禁用，并退出 abilities 选择池
+	channel.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusManuallyDisabled, 1: common.ChannelStatusManuallyDisabled}
+	channel.SyncMultiKeyChannelStatus()
+	require.NoError(t, channel.Update())
+
+	var stored Channel
+	require.NoError(t, DB.First(&stored, channel.Id).Error)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, stored.Status)
+	assert.Equal(t, allKeysDisabledReason, stored.GetOtherInfo()["status_reason"])
+	var ability Ability
+	require.NoError(t, DB.First(&ability, "channel_id = ?", channel.Id).Error)
+	assert.False(t, ability.Enabled)
+
+	// 重新启用一个密钥后，渠道随密钥恢复可用
+	delete(channel.ChannelInfo.MultiKeyStatusList, 0)
+	channel.SyncMultiKeyChannelStatus()
+	require.NoError(t, channel.Update())
+
+	require.NoError(t, DB.First(&stored, channel.Id).Error)
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
+	require.NoError(t, DB.First(&ability, "channel_id = ?", channel.Id).Error)
+	assert.True(t, ability.Enabled)
+}
+
 func TestSaveStatusStateFromSingleKeySnapshotPreservesUnownedColumns(t *testing.T) {
 	setupChannelStatusTest(t)
 

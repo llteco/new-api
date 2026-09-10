@@ -3,24 +3,30 @@ package controller
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestValidateChannelProxy(t *testing.T) {
@@ -462,4 +468,304 @@ func TestTestAllChannelsRejectsExistingActiveTask(t *testing.T) {
 	require.Equal(t, http.StatusConflict, recorder.Code)
 	require.Contains(t, recorder.Body.String(), existing.TaskID)
 	require.Contains(t, recorder.Body.String(), "已有通道测试任务正在运行或等待中")
+}
+
+func setupManualChannelTestErrorTest(t *testing.T) {
+	t.Helper()
+	previousDB := model.DB
+	previousType := common.MainDatabaseType()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	// :memory: 下每个连接是独立库，单连接保证异步禁用协程与断言读到同一份数据
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.User{}, &model.Ability{}))
+	model.DB = db
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	// 禁用渠道后的通知协程会查询 root 用户；Setting 允许未配置价格的测试模型
+	require.NoError(t, db.Create(&model.User{
+		Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled,
+		Setting: `{"accept_unset_model_ratio_model":true}`,
+	}).Error)
+
+	memoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	// 通知路径按 RedisEnabled 分流；测试进程未初始化 Redis，须显式走内存限流
+	redisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	autoDisableEnabled := common.AutomaticDisableChannelEnabled
+	common.AutomaticDisableChannelEnabled = true
+	keywords := operation_setting.AutomaticDisableKeywords
+	operation_setting.AutomaticDisableKeywordsFromString("insufficient balance")
+	errorLogEnabled := constant.ErrorLogEnabled
+	constant.ErrorLogEnabled = false
+
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.SetMainDatabaseType(previousType)
+		common.MemoryCacheEnabled = memoryCacheEnabled
+		common.RedisEnabled = redisEnabled
+		common.AutomaticDisableChannelEnabled = autoDisableEnabled
+		operation_setting.AutomaticDisableKeywords = keywords
+		constant.ErrorLogEnabled = errorLogEnabled
+	})
+}
+
+func newManualTestContext(usingKey string) *gin.Context {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelKey, usingKey)
+	return c
+}
+
+// TestTestChannelHandlerCoolsKeyOnUpstreamQuotaError drives the full manual
+// test handler against a stub upstream returning 429 insufficient quota, and
+// protects the wiring: the used key must get the limit-pattern cooldown even
+// though the upstream error also sets localErr (which makes TestChannel return
+// early to the client).
+func TestTestChannelHandlerCoolsKeyOnUpstreamQuotaError(t *testing.T) {
+	setupManualChannelTestErrorTest(t)
+	// 限额模式冷却不应依赖全局自动禁用开关
+	common.AutomaticDisableChannelEnabled = false
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"message":"Your token-plan quota has been exhausted.","type":"insufficient_quota","code":"insufficient_quota"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	upstreamURL := upstream.URL
+
+	channel := &model.Channel{
+		Name:     "aliyun-quota-e2e",
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "upk1",
+		Status:   common.ChannelStatusEnabled,
+		Models:   "qwen-e2e",
+		Group:    "default",
+		BaseURL:  &upstreamURL,
+		Priority: func() *int64 { p := int64(0); return &p }(),
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 1,
+			MultiKeyMode: constant.MultiKeyModeRandom,
+			MultiKeyLimitPatterns: []model.LimitPattern{
+				{Name: "aliyun", Regex: "Your token-plan quota has been exhausted", ResetCycle: "monthly:1"},
+			},
+		},
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/channel/test/"+strconv.Itoa(channel.Id), nil)
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(channel.Id)}}
+
+	TestChannel(c)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "token-plan quota has been exhausted")
+
+	// 冷却同步落库，无需等待异步任务
+	var stored model.Channel
+	require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+	assert.Equal(t, common.ChannelStatusTempDisabled, stored.ChannelInfo.MultiKeyStatusList[0],
+		"used key should be cooled down by the limit pattern")
+	assert.Greater(t, stored.ChannelInfo.MultiKeyCooldownUntil[0], common.GetTimestamp())
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status, "channel stays enabled while cooling")
+}
+
+func newInsufficientBalanceError() *relaytypes.NewAPIError {
+	return relaytypes.NewOpenAIError(
+		errors.New("insufficient balance"),
+		relaytypes.ErrorCodeBadResponseStatusCode,
+		http.StatusPaymentRequired,
+	)
+}
+
+// TestProcessManualTestChannelErrorDisablesFailingKey protects the reported
+// behavior: a manual "test connection" failure (e.g. insufficient balance)
+// must auto-disable the used key just like the relay path, when the channel
+// has auto-ban enabled and the error matches the disable rules. Upstream
+// errors produce a testResult with BOTH localErr and newAPIError set, so the
+// case mirrors that real shape.
+func TestProcessManualTestChannelErrorDisablesFailingKey(t *testing.T) {
+	setupManualChannelTestErrorTest(t)
+
+	autoBan := 1
+	channel := &model.Channel{
+		Name:     "manual-test-multi-key",
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "k1\nk2",
+		Status:   common.ChannelStatusEnabled,
+		Models:   "gpt-4o-mini",
+		Group:    "default",
+		AutoBan:  &autoBan,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyMode: constant.MultiKeyModeRandom,
+		},
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	upstreamErr := newInsufficientBalanceError()
+	processManualTestChannelError(channel, testResult{
+		context:     newManualTestContext("k1"),
+		localErr:    upstreamErr,
+		newAPIError: upstreamErr,
+	})
+
+	require.Eventually(t, func() bool {
+		var stored model.Channel
+		if err := model.DB.First(&stored, channel.Id).Error; err != nil {
+			return false
+		}
+		return stored.ChannelInfo.MultiKeyStatusList[0] == common.ChannelStatusAutoDisabled
+	}, 5*time.Second, 20*time.Millisecond, "used key should be auto-disabled")
+
+	var stored model.Channel
+	require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, stored.ChannelInfo.MultiKeyStatusList[0])
+	assert.Contains(t, stored.ChannelInfo.MultiKeyDisabledReason[0], "insufficient balance")
+	// 另一个 key 仍然可用，渠道不应被整体禁用
+	assert.NotContains(t, stored.ChannelInfo.MultiKeyStatusList, 1)
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
+}
+
+// TestProcessManualTestChannelErrorDisablesByStatusCode covers the disable
+// rule driven by the upstream status code (402) rather than keywords, which
+// only works when the test keeps the real upstream status code.
+func TestProcessManualTestChannelErrorDisablesByStatusCode(t *testing.T) {
+	setupManualChannelTestErrorTest(t)
+	operation_setting.AutomaticDisableKeywordsFromString("")
+	previousRanges := operation_setting.AutomaticDisableStatusCodeRanges
+	operation_setting.AutomaticDisableStatusCodeRanges = []operation_setting.StatusCodeRange{{Start: 402, End: 402}}
+	t.Cleanup(func() {
+		operation_setting.AutomaticDisableStatusCodeRanges = previousRanges
+	})
+
+	autoBan := 1
+	channel := &model.Channel{
+		Name:     "manual-test-status-code",
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "k1\nk2",
+		Status:   common.ChannelStatusEnabled,
+		Models:   "gpt-4o-mini",
+		Group:    "default",
+		AutoBan:  &autoBan,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyMode: constant.MultiKeyModeRandom,
+		},
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	upstreamErr := newInsufficientBalanceError()
+	processManualTestChannelError(channel, testResult{
+		context:     newManualTestContext("k1"),
+		localErr:    upstreamErr,
+		newAPIError: upstreamErr,
+	})
+
+	require.Eventually(t, func() bool {
+		var stored model.Channel
+		if err := model.DB.First(&stored, channel.Id).Error; err != nil {
+			return false
+		}
+		return stored.ChannelInfo.MultiKeyStatusList[0] == common.ChannelStatusAutoDisabled
+	}, 5*time.Second, 20*time.Millisecond, "used key should be auto-disabled by status code rule")
+}
+
+// TestProcessManualTestChannelErrorKeyLimitCooldownWins mirrors the relay
+// semantics: when a multi-key limit pattern matches, the key gets a cooldown
+// (temp disabled) instead of a hard disable, even with auto-ban enabled.
+func TestProcessManualTestChannelErrorKeyLimitCooldownWins(t *testing.T) {
+	setupManualChannelTestErrorTest(t)
+
+	autoBan := 1
+	channel := &model.Channel{
+		Name:     "manual-test-limit-pattern",
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "k1\nk2",
+		Status:   common.ChannelStatusEnabled,
+		Models:   "gpt-4o-mini",
+		Group:    "default",
+		AutoBan:  &autoBan,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyMode: constant.MultiKeyModeRandom,
+			MultiKeyLimitPatterns: []model.LimitPattern{
+				{Name: "balance", Regex: "insufficient balance", ResetCycle: "monthly:1"},
+			},
+		},
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	processManualTestChannelError(channel, testResult{
+		context:     newManualTestContext("k1"),
+		newAPIError: newInsufficientBalanceError(),
+	})
+
+	var stored model.Channel
+	require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+	assert.Equal(t, common.ChannelStatusTempDisabled, stored.ChannelInfo.MultiKeyStatusList[0])
+	assert.Greater(t, stored.ChannelInfo.MultiKeyCooldownUntil[0], common.GetTimestamp())
+	assert.Contains(t, stored.ChannelInfo.MultiKeyDisabledReason[0], "balance")
+}
+
+func TestProcessManualTestChannelErrorSkipsInapplicableCases(t *testing.T) {
+	setupManualChannelTestErrorTest(t)
+
+	autoBan := 1
+	disabledChannel := &model.Channel{
+		Name: "already-disabled", Type: constant.ChannelTypeOpenAI, Key: "k1",
+		Status: common.ChannelStatusManuallyDisabled, Models: "gpt-4o-mini", Group: "default",
+		AutoBan: &autoBan,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 1, MultiKeyMode: constant.MultiKeyModeRandom},
+	}
+	require.NoError(t, model.DB.Create(disabledChannel).Error)
+	processManualTestChannelError(disabledChannel, testResult{
+		context:     newManualTestContext("k1"),
+		newAPIError: newInsufficientBalanceError(),
+	})
+
+	// AutoBan 带 gorm:"default:1"，必须显式置 0 才能构造"未开启自动禁用"的渠道
+	autoBanOff := 0
+	enabledNoAutoBan := &model.Channel{
+		Name: "no-autoban", Type: constant.ChannelTypeOpenAI, Key: "k1",
+		Status: common.ChannelStatusEnabled, Models: "gpt-4o-mini", Group: "default",
+		AutoBan:      &autoBanOff,
+		ChannelInfo:  model.ChannelInfo{IsMultiKey: true, MultiKeySize: 1, MultiKeyMode: constant.MultiKeyModeRandom},
+	}
+	require.NoError(t, model.DB.Create(enabledNoAutoBan).Error)
+	processManualTestChannelError(enabledNoAutoBan, testResult{
+		context:     newManualTestContext("k1"),
+		newAPIError: newInsufficientBalanceError(),
+	})
+
+	enabled := &model.Channel{
+		Name: "local-error", Type: constant.ChannelTypeOpenAI, Key: "k1",
+		Status: common.ChannelStatusEnabled, Models: "gpt-4o-mini", Group: "default",
+		AutoBan: &autoBan,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 1, MultiKeyMode: constant.MultiKeyModeRandom},
+	}
+	require.NoError(t, model.DB.Create(enabled).Error)
+	processManualTestChannelError(enabled, testResult{
+		context:  newManualTestContext("k1"),
+		localErr: errors.New("request build failed"),
+	})
+	processManualTestChannelError(enabled, testResult{context: newManualTestContext("k1")})
+
+	for _, ch := range []*model.Channel{disabledChannel, enabledNoAutoBan, enabled} {
+		var stored model.Channel
+		require.NoError(t, model.DB.First(&stored, ch.Id).Error)
+		assert.Empty(t, stored.ChannelInfo.MultiKeyStatusList, "channel %s should stay untouched", ch.Name)
+		assert.Equal(t, ch.Status, stored.Status)
+	}
 }

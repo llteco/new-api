@@ -438,7 +438,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	if resp != nil {
 		httpResp = resp.(*http.Response)
 		if httpResp.StatusCode != http.StatusOK {
-			err := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
+			upstreamErr := service.RelayErrorHandler(c.Request.Context(), httpResp, true)
 			common.SysError(fmt.Sprintf(
 				"channel test bad response: channel_id=%d name=%s type=%d model=%s endpoint_type=%s status=%d err=%v",
 				channel.Id,
@@ -447,12 +447,13 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 				testModel,
 				endpointType,
 				httpResp.StatusCode,
-				err,
+				upstreamErr,
 			))
+			// newAPIError 保留上游真实状态码，供自动禁用规则（状态码/关键词）判断
 			return testResult{
 				context:     c,
-				localErr:    err,
-				newAPIError: types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError),
+				localErr:    upstreamErr,
+				newAPIError: upstreamErr,
 			}
 		}
 	}
@@ -867,6 +868,10 @@ func TestChannel(c *gin.Context) {
 		requestCtx = c.Request.Context()
 	}
 	result := testChannel(requestCtx, channel, testUserID, testModel, endpointType, isStream)
+	// 手动测试失败时与正常转发、定时巡检走同一套错误处理，满足条件即禁用/冷却命中的密钥。
+	// 必须放在 localErr 分支之前：上游返回错误时 localErr 与 newAPIError 同时非空，
+	// 提前 return 会让错误处理永远执行不到。
+	processManualTestChannelError(channel, result)
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
@@ -897,6 +902,24 @@ func TestChannel(c *gin.Context) {
 		"message": "",
 		"time":    consumedTime,
 	})
+}
+
+// processManualTestChannelError 让手动「测试连接」失败与正常转发、定时巡检走同一套
+// 错误处理：先按多 Key 限额模式给命中的密钥设置冷却；未命中且满足自动禁用条件
+// （全局开关 + 渠道 AutoBan + 状态码/关键词规则）时禁用该密钥。渠道未启用时不处理。
+// 注意上游返回错误时 testResult 的 localErr 与 newAPIError 同时非空，不能用 localErr
+// 区分"测试未发出"，因此仅以 newAPIError 是否存在为准。
+func processManualTestChannelError(channel *model.Channel, result testResult) {
+	if result.newAPIError == nil {
+		return
+	}
+	if channel.Status != common.ChannelStatusEnabled {
+		return
+	}
+	processChannelError(result.context, *types.NewChannelError(
+		channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
+		common.GetContextKeyString(result.context, constant.ContextKeyChannelKey),
+		channel.GetAutoBan()), result.newAPIError)
 }
 
 // channelTestSummary records the outcome of one channel test cycle so the
