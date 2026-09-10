@@ -27,6 +27,12 @@ func setupDistributorFallbackDB(t *testing.T) {
 		if err != nil {
 			panic("failed to open test db: " + err.Error())
 		}
+		// :memory: 下每个连接是独立库，单连接保证所有读写落在同一份数据上
+		sqlDB, err := db.DB()
+		if err != nil {
+			panic("failed to get sql.DB: " + err.Error())
+		}
+		sqlDB.SetMaxOpenConns(1)
 		model.DB = db
 		common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 		if err := db.AutoMigrate(&model.Channel{}, &model.Ability{}); err != nil {
@@ -144,4 +150,44 @@ func TestSelectChannelWithAvailableKeyStopsWhenAllChannelsRepeat(t *testing.T) {
 	common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
 
 	assert.Nil(t, selectChannelWithAvailableKey(c, only.Id, "fallback-model"))
+}
+
+// TestSelectChannelWithAvailableKeyTerminatesAcrossTiers drives the fallback
+// through multiple priority tiers whose channels all lack a usable key; it
+// must exhaust the random same-tier retries and return nil deterministically.
+func TestSelectChannelWithAvailableKeyTerminatesAcrossTiers(t *testing.T) {
+	setupDistributorFallbackDB(t)
+
+	highPriority, lowPriority := int64(10), int64(0)
+	newCoolingChannel := func(name string, priority *int64) *model.Channel {
+		return &model.Channel{
+			Name: name, Type: constant.ChannelTypeOpenAI,
+			Key: "k1\nk2", Status: common.ChannelStatusEnabled,
+			Models: "fallback-model", Group: "default", Priority: priority,
+			ChannelInfo: model.ChannelInfo{
+				IsMultiKey:            true,
+				MultiKeySize:          2,
+				MultiKeyMode:          constant.MultiKeyModeRandom,
+				MultiKeyStatusList:    map[int]int{0: common.ChannelStatusTempDisabled, 1: common.ChannelStatusTempDisabled},
+				MultiKeyCooldownUntil: map[int]int64{0: common.GetTimestamp() + 3600, 1: common.GetTimestamp() + 3600},
+			},
+		}
+	}
+	for _, def := range []struct {
+		name     string
+		priority *int64
+	}{{"cool-high", &highPriority}, {"cool-low-a", &lowPriority}, {"cool-low-b", &lowPriority}} {
+		ch := newCoolingChannel(def.name, def.priority)
+		require.NoError(t, model.DB.Create(ch).Error)
+		require.NoError(t, ch.AddAbilities(nil))
+	}
+
+	model.InitChannelCache()
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, "default")
+
+	assert.Nil(t, selectChannelWithAvailableKey(c, 1, "fallback-model"))
 }

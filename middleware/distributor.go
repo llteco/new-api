@@ -195,12 +195,15 @@ func Distribute() func(c *gin.Context) {
 
 // selectChannelWithAvailableKey 在原选中渠道因 channel:no_available_key 失败后，
 // 按与 relay 重试一致的语义（retry 序号 = 优先级层级）逐级降低优先级重选渠道，
-// 直到某个渠道真正取到可用密钥。选择失败或重选结果开始重复（所有可用渠道已遍历）
-// 时返回 nil，由调用方返回错误。
+// 直到某个渠道真正取到可用密钥。同层内的选择是随机的，重选到已尝试的渠道时
+// 继续重试（同层可能还有未尝试的可用渠道），仅当连续尝试明显超过已见渠道数
+// 仍未出现新渠道时视为候选耗尽，返回 nil 由调用方返回错误。
 func selectChannelWithAvailableKey(c *gin.Context, failedChannelId int, modelName string) *model.Channel {
 	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 	tried := map[int]bool{failedChannelId: true}
+	attempts := 0
 	for retry := 1; ; retry++ {
+		attempts++
 		next, _, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
 			Ctx:         c,
 			ModelName:   modelName,
@@ -208,8 +211,14 @@ func selectChannelWithAvailableKey(c *gin.Context, failedChannelId int, modelNam
 			RequestPath: c.Request.URL.Path,
 			Retry:       common.GetPointer(retry),
 		})
-		if err != nil || next == nil || tried[next.Id] {
+		if err != nil || next == nil {
 			return nil
+		}
+		if tried[next.Id] {
+			if attempts > len(tried)*2+2 {
+				return nil
+			}
+			continue
 		}
 		tried[next.Id] = true
 		if SetupContextForSelectedChannel(c, next, modelName) == nil {

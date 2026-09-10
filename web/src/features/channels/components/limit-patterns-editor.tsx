@@ -187,6 +187,13 @@ export function LimitPatternsEditor(props: LimitPatternsEditorProps) {
                 )}
               </div>
             )}
+            {usesResetCapture && !pattern.date_layout.trim() && (
+              <p className='text-sm text-amber-600 dark:text-amber-400'>
+                {t(
+                  'A date layout is required to parse the captured reset time, otherwise the reset cycle or fallback minutes apply'
+                )}
+              </p>
+            )}
             <div className='flex gap-2'>
               <Input
                 type='number'

@@ -121,6 +121,7 @@
     "7 days ago": "7 日前",
     "80,443,8080": "80,443,8080",
     "A billing multiplier. Lower ratios mean lower API call costs.": "收費乘數，倍率越低，API 呼叫費用越低。",
+    "A date layout is required to parse the captured reset time, otherwise the reset cycle or fallback minutes apply": "需設定時間格式才能解析擷取的重置時間，否則將按重置週期或備援分鐘數冷卻",
     "A focused home for keys, balance, routing, and service health.": "集中展示金鑰、餘額、路由和服務健康狀態。",
     "About": "關於",
     "About {{days}} days left": "約剩 {{days}} 日",
