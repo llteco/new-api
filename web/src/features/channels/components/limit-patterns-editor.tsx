@@ -30,8 +30,12 @@ import {
 import {
   LIMIT_PATTERN_PRESETS,
   PREDEFINED_DATE_LAYOUTS,
+  formatResetCycle,
+  parseResetCycle,
+  resetCycleMaxDay,
   validateLimitPatternRegex,
 } from '../lib/limit-pattern-utils'
+import type { ResetCycleType } from '../lib/limit-pattern-utils'
 import type { LimitPattern } from '../types'
 
 type LimitPatternsEditorProps = {
@@ -91,8 +95,9 @@ export function LimitPatternsEditor(props: LimitPatternsEditorProps) {
         {
           name: '',
           regex: '',
-          date_layout: '2006-01-02 15:04:05',
+          date_layout: '',
           default_minutes: 10,
+          reset_cycle: '',
         },
       ],
       [...keysRef.current, nextKey()]
@@ -125,7 +130,11 @@ export function LimitPatternsEditor(props: LimitPatternsEditorProps) {
 
       {props.value.map((pattern, index) => {
         const validation = validateLimitPatternRegex(pattern.regex)
-        const usingCustomLayout = !isPredefinedLayout(pattern.date_layout)
+        // 日期布局仅对带 (?P<reset>...) 捕获组的正则有意义；无捕获组的
+        // 模式（如阿里云额度耗尽）只用周期或默认分钟数冷却。
+        const usesResetCapture = pattern.regex.includes('(?P<reset>')
+        const usingCustomLayout = usesResetCapture && !isPredefinedLayout(pattern.date_layout)
+        const cycle = parseResetCycle(pattern.reset_cycle)
         return (
           <div key={keysRef.current[index]} className='space-y-2 rounded-lg border p-4'>
             <Input
@@ -135,7 +144,7 @@ export function LimitPatternsEditor(props: LimitPatternsEditorProps) {
             />
             <Input
               value={pattern.regex}
-              placeholder={t('Regex with (?P<reset>...) group')}
+              placeholder={t('Regex with optional (?P<reset>...) group')}
               className='font-mono text-sm'
               onChange={(e) => updatePattern(index, { regex: e.target.value })}
               aria-invalid={!validation.valid}
@@ -145,47 +154,99 @@ export function LimitPatternsEditor(props: LimitPatternsEditorProps) {
                 {t(validation.error ?? '')}
               </p>
             )}
+            {usesResetCapture && (
+              <div className='flex gap-2'>
+                <NativeSelect
+                  size='sm'
+                  value={usingCustomLayout ? 'custom' : pattern.date_layout}
+                  onChange={(e) => {
+                    const next = e.target.value
+                    updatePattern(index, {
+                      date_layout: next === 'custom' ? '' : next,
+                    })
+                  }}
+                >
+                  {PREDEFINED_DATE_LAYOUTS.map((layout) => (
+                    <NativeSelectOption
+                      key={layout.value}
+                      value={layout.value}
+                    >
+                      {layout.label}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                {usingCustomLayout && (
+                  <Input
+                    value={pattern.date_layout}
+                    placeholder={t('Custom date layout')}
+                    className='flex-1'
+                    onChange={(e) =>
+                      updatePattern(index, { date_layout: e.target.value })
+                    }
+                  />
+                )}
+              </div>
+            )}
             <div className='flex gap-2'>
-              <NativeSelect
-                size='sm'
-                value={usingCustomLayout ? 'custom' : pattern.date_layout}
-                onChange={(e) => {
-                  const next = e.target.value
-                  updatePattern(index, {
-                    date_layout: next === 'custom' ? '' : next,
-                  })
-                }}
-              >
-                {PREDEFINED_DATE_LAYOUTS.map((layout) => (
-                  <NativeSelectOption
-                    key={layout.value}
-                    value={layout.value}
-                  >
-                    {layout.label}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-              {usingCustomLayout && (
-                <Input
-                  value={pattern.date_layout}
-                  placeholder={t('Custom date layout')}
-                  className='flex-1'
-                  onChange={(e) =>
-                    updatePattern(index, { date_layout: e.target.value })
-                  }
-                />
-              )}
               <Input
                 type='number'
                 min={1}
                 value={pattern.default_minutes}
                 className='w-24'
+                aria-label={t('Fallback minutes')}
                 onChange={(e) =>
                   updatePattern(index, {
                     default_minutes: Number(e.target.value),
                   })
                 }
               />
+              <NativeSelect
+                size='sm'
+                className='flex-1'
+                value={cycle.type}
+                aria-label={t('Reset cycle')}
+                onChange={(e) => {
+                  const type = e.target.value as ResetCycleType
+                  updatePattern(index, {
+                    reset_cycle: formatResetCycle(type, cycle.day),
+                  })
+                }}
+              >
+                <NativeSelectOption value='none'>
+                  {t('No cycle')}
+                </NativeSelectOption>
+                <NativeSelectOption value='daily'>
+                  {t('Daily')}
+                </NativeSelectOption>
+                <NativeSelectOption value='weekly'>
+                  {t('Weekly')}
+                </NativeSelectOption>
+                <NativeSelectOption value='monthly'>
+                  {t('Monthly')}
+                </NativeSelectOption>
+              </NativeSelect>
+              {(cycle.type === 'weekly' || cycle.type === 'monthly') && (
+                <Input
+                  type='number'
+                  min={1}
+                  max={resetCycleMaxDay[cycle.type]}
+                  value={cycle.day}
+                  className='w-20'
+                  aria-label={
+                    cycle.type === 'weekly'
+                      ? t('Day of week (1=Mon)')
+                      : t('Day of month')
+                  }
+                  onChange={(e) =>
+                    updatePattern(index, {
+                      reset_cycle: formatResetCycle(
+                        cycle.type,
+                        Number(e.target.value)
+                      ),
+                    })
+                  }
+                />
+              )}
             </div>
             <div>
               <Button

@@ -64,6 +64,10 @@ type LimitPattern struct {
 	Regex          string `json:"regex"`
 	DateLayout     string `json:"date_layout"`
 	DefaultMinutes int    `json:"default_minutes"`
+	// ResetCycle 为错误信息不含重置时间时的周期重置规则：
+	// "daily"（每日 0 点）、"weekly:N"（N=1 周一 .. 7 周日）、"monthly:N"（每月 N 号，
+	// 当月无 N 号时顺延到下月 1 号）。为空时回退到 DefaultMinutes。
+	ResetCycle string `json:"reset_cycle,omitempty"`
 }
 
 type ChannelInfo struct {

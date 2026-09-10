@@ -25,8 +25,10 @@ import { z } from 'zod'
 export const limitPatternSchema = z.object({
   name: z.string().min(1),
   regex: z.string().min(1),
-  date_layout: z.string().min(1),
+  date_layout: z.string(),
   default_minutes: z.number().int().min(1).default(10),
+  // "daily" | "weekly:N" (1=Mon..7=Sun) | "monthly:N"; empty when unset
+  reset_cycle: z.string().optional(),
 })
 
 export type LimitPattern = z.infer<typeof limitPatternSchema>

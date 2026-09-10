@@ -253,14 +253,16 @@ export const channelFormSchema = z
     // ponytail: inline schema (not reusing limitPatternSchema) because its
     // `.default(10)` on default_minutes splits zod input/output types and
     // breaks the form's zodResolver typing. The editor always sets
-    // default_minutes, so requiring it here is safe.
+    // default_minutes, so requiring it here is safe. date_layout may be empty
+    // for patterns without a (?P<reset>...) capture group.
     multi_key_limit_patterns: z
       .array(
         z.object({
           name: z.string().min(1),
           regex: z.string().min(1),
-          date_layout: z.string().min(1),
+          date_layout: z.string(),
           default_minutes: z.number().int().min(1),
+          reset_cycle: z.string().optional(),
         })
       )
       .optional(),
