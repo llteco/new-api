@@ -744,7 +744,7 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 		if !hasEnabledMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) && !hasCoolingMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) {
 			channel.Status = common.ChannelStatusAutoDisabled
 			info := channel.GetOtherInfo()
-			info["status_reason"] = "All keys are disabled"
+			info["status_reason"] = allKeysDisabledReason
 			info["status_time"] = common.GetTimestamp()
 			channel.SetOtherInfo(info)
 		} else if status == common.ChannelStatusEnabled {
@@ -777,6 +777,40 @@ func hasCoolingMultiKey(keys []string, statusList map[int]int) bool {
 		}
 	}
 	return false
+}
+
+// allKeysDisabledReason marks channels whose status was flipped to disabled
+// because every key is disabled (none cooling down). It is the re-enable
+// criterion in SyncMultiKeyChannelStatus, so the marker must stay identical for
+// the automatic path (handlerMultiKeyUpdate) and the manual key-management path.
+const allKeysDisabledReason = "All keys are disabled"
+
+// SyncMultiKeyChannelStatus aligns the channel status with per-key availability
+// after key management operations (disable/enable/delete in ManageMultiKeys).
+// A still-enabled channel whose keys are all disabled — and none cooling down —
+// is marked auto-disabled, so the distributor stops selecting it; a channel that
+// was disabled by that rule is re-enabled once any key becomes usable again.
+// Channels disabled manually or auto-disabled for other reasons are left
+// untouched. The caller persists the change (Channel.Update + abilities sync).
+func (channel *Channel) SyncMultiKeyChannelStatus() {
+	keys := channel.GetKeys()
+	hasUsableKey := hasEnabledMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList) ||
+		hasCoolingMultiKey(keys, channel.ChannelInfo.MultiKeyStatusList)
+	switch {
+	case !hasUsableKey && channel.Status == common.ChannelStatusEnabled:
+		channel.Status = common.ChannelStatusAutoDisabled
+		info := channel.GetOtherInfo()
+		info["status_reason"] = allKeysDisabledReason
+		info["status_time"] = common.GetTimestamp()
+		channel.SetOtherInfo(info)
+	case hasUsableKey && channel.Status == common.ChannelStatusAutoDisabled &&
+		channel.GetOtherInfo()["status_reason"] == allKeysDisabledReason:
+		channel.Status = common.ChannelStatusEnabled
+		info := channel.GetOtherInfo()
+		delete(info, "status_reason")
+		delete(info, "status_time")
+		channel.SetOtherInfo(info)
+	}
 }
 
 func UpdateChannelStatus(channelId int, usingKey string, status int, reason string) bool {

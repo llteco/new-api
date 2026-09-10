@@ -1699,6 +1699,7 @@ func ManageMultiKeys(c *gin.Context) {
 
 		channel.ChannelInfo.MultiKeyStatusList[keyIndex] = 2 // disabled
 
+		channel.SyncMultiKeyChannelStatus()
 		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)
@@ -1744,6 +1745,7 @@ func ManageMultiKeys(c *gin.Context) {
 			delete(channel.ChannelInfo.MultiKeyCooldownUntil, keyIndex)
 		}
 
+		channel.SyncMultiKeyChannelStatus()
 		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)
@@ -1769,6 +1771,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
 		channel.ChannelInfo.MultiKeyCooldownUntil = make(map[int]int64)
 
+		channel.SyncMultiKeyChannelStatus()
 		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)
@@ -1816,6 +1819,7 @@ func ManageMultiKeys(c *gin.Context) {
 			return
 		}
 
+		channel.SyncMultiKeyChannelStatus()
 		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)
@@ -1896,6 +1900,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
 		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
 
+		channel.SyncMultiKeyChannelStatus()
 		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)
@@ -1964,6 +1969,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
 		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
 
+		channel.SyncMultiKeyChannelStatus()
 		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)

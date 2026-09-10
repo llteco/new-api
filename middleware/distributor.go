@@ -162,10 +162,58 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if setupErr != nil && channel != nil && setupErr.GetErrorCode() == types.ErrorCodeChannelNoAvailableKey && !ok && shouldSelectChannel {
+			// 渠道本身启用但暂时没有可用密钥（例如多 key 渠道的密钥全部被禁用或处于冷却期）时，
+			// 逐级降低优先级重选渠道，而不是携带空密钥把请求发给上游。
+			// 令牌绑定了指定渠道（ok）时不降级，直接返回错误。
+			if next := selectChannelWithAvailableKey(c, channel.Id, modelRequest.Model); next != nil {
+				channel = next
+				setupErr = nil
+			}
+		}
+		if setupErr != nil && channel != nil {
+			if setupErr.GetErrorCode() == types.ErrorCodeChannelNoAvailableKey {
+				showGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+				if selectGroup, exists := common.GetContextKey(c, constant.ContextKeyAutoGroup); exists {
+					if g, isStr := selectGroup.(string); isStr {
+						showGroup = fmt.Sprintf("auto(%s)", g)
+					}
+				}
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorChannelNoAvailableKey, map[string]any{"Group": showGroup, "Model": modelRequest.Model}), types.ErrorCodeChannelNoAvailableKey)
+			} else {
+				abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
+			}
+			return
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
+		}
+	}
+}
+
+// selectChannelWithAvailableKey 在原选中渠道因 channel:no_available_key 失败后，
+// 按与 relay 重试一致的语义（retry 序号 = 优先级层级）逐级降低优先级重选渠道，
+// 直到某个渠道真正取到可用密钥。选择失败或重选结果开始重复（所有可用渠道已遍历）
+// 时返回 nil，由调用方返回错误。
+func selectChannelWithAvailableKey(c *gin.Context, failedChannelId int, modelName string) *model.Channel {
+	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	tried := map[int]bool{failedChannelId: true}
+	for retry := 1; ; retry++ {
+		next, _, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+			Ctx:         c,
+			ModelName:   modelName,
+			TokenGroup:  usingGroup,
+			RequestPath: c.Request.URL.Path,
+			Retry:       common.GetPointer(retry),
+		})
+		if err != nil || next == nil || tried[next.Id] {
+			return nil
+		}
+		tried[next.Id] = true
+		if SetupContextForSelectedChannel(c, next, modelName) == nil {
+			return next
 		}
 	}
 }
