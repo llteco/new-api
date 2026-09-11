@@ -62,6 +62,10 @@ interface MultiSelectProps {
   id?: string
   /** Disable the entire control. */
   disabled?: boolean
+  /** Forwarded to the underlying input so FormControl aria wiring reaches screen readers. */
+  'aria-describedby'?: string
+  /** Forwarded to the underlying input so FormControl aria wiring reaches screen readers. */
+  'aria-invalid'?: boolean | 'false' | 'true'
   /**
    * Limits rendered chips while keeping all values selected.
    * Hidden values remain searchable/removable from the dropdown.
@@ -340,6 +344,8 @@ export function MultiSelect(props: MultiSelectProps) {
         </ComboboxValue>
         <ComboboxChipsInput
           id={props.id}
+          aria-describedby={props['aria-describedby']}
+          aria-invalid={props['aria-invalid']}
           placeholder={
             props.selected.length === 0 && !props.renderSelectedSummary
               ? placeholder

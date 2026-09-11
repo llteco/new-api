@@ -297,20 +297,26 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		return
 	}
 
-	// 获取用户和组的倍率信息
+	// group 为任务使用的分组，userGroup 为用户分组列表（可能是逗号分隔的多分组），
+	// 用户-分组专属倍率需按用户的完整分组列表按序匹配
 	group := task.Group
-	if group == "" {
-		user, err := model.GetUserById(task.UserId, false)
-		if err == nil {
-			group = user.Group
+	userGroup := ""
+	if user, err := model.GetUserById(task.UserId, false); err == nil {
+		userGroup = user.Group
+		if group == "" {
+			group = common.PrimaryGroup(userGroup)
 		}
 	}
 	if group == "" {
 		return
 	}
+	if userGroup == "" {
+		// 用户分组查询失败时退回使用分组，保持旧的精确匹配行为
+		userGroup = group
+	}
 
 	groupRatio := ratio_setting.GetGroupRatio(group)
-	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
+	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(userGroup, group)
 
 	var finalGroupRatio float64
 	if hasUserGroupRatio {

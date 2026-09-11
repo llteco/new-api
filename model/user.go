@@ -95,7 +95,7 @@ type User struct {
 	Quota            int                        `json:"quota" gorm:"type:int;default:0"`
 	UsedQuota        int                        `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
 	RequestCount     int                        `json:"request_count" gorm:"type:int;default:0;"`               // request number
-	Group            string                     `json:"group" gorm:"type:varchar(64);default:'default'"`
+	Group            string                     `json:"group" gorm:"type:varchar(1024);default:'default'"` // 逗号分隔的多分组，第一个为主分组
 	AffCode          string                     `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
 	AffCount         int                        `json:"aff_count" gorm:"type:int;default:0;column:aff_count"`
 	AffQuota         int                        `json:"aff_quota" gorm:"type:int;default:0;column:aff_quota"`           // 邀请剩余额度
@@ -454,7 +454,8 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 
 	query = query.Where("("+likeCondition+")", likeArgs...)
 	if group != "" {
-		query = query.Where(commonGroupCol+" = ?", group)
+		// 多分组用户按“包含该分组”匹配
+		query = ApplyGroupContainsFilter(query, group)
 	}
 	if role != nil {
 		query = query.Where("role = ?", *role)
@@ -835,6 +836,7 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 			return err
 		}
 	}
+	user.Group = common.NormalizeGroupList(user.Group)
 
 	newUser := *user
 	updates := map[string]interface{}{

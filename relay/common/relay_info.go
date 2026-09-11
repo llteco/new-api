@@ -477,9 +477,14 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	//paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
 
 	tokenGroup := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
-	// 当令牌分组为空时，表示使用用户分组
+	// 当令牌分组为空时，表示使用用户分组；多分组用户取实际使用的单一分组
+	// （优先取 distributor 解析出的 UsingGroup，否则取用户的主分组），
+	// 该值会进入渠道选择的精确匹配，不能是逗号列表。
 	if tokenGroup == "" {
-		tokenGroup = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+		tokenGroup = common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	}
+	if tokenGroup == "" {
+		tokenGroup = common.PrimaryGroup(common.GetContextKeyString(c, constant.ContextKeyUserGroup))
 	}
 
 	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)

@@ -166,7 +166,9 @@ func channelGroupFilterPattern(group string) string {
 	return "%," + group + ",%"
 }
 
-func ApplyChannelGroupFilter(query *gorm.DB, group string) *gorm.DB {
+// ApplyGroupContainsFilter filters rows whose comma-separated group column
+// (channels and multi-group users) contains the given group.
+func ApplyGroupContainsFilter(query *gorm.DB, group string) *gorm.DB {
 	group = NormalizeChannelGroupFilter(group)
 	if group == "" {
 		return query
@@ -444,7 +446,7 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 	// 构造WHERE子句
 	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
 	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
-	baseQuery = ApplyChannelGroupFilter(baseQuery.Where(whereClause, args...), group)
+	baseQuery = ApplyGroupContainsFilter(baseQuery.Where(whereClause, args...), group)
 
 	// 执行查询
 	err := order.Apply(baseQuery).Find(&channels).Error
@@ -1042,7 +1044,7 @@ func SearchTags(keyword string, group string, model string, idSort bool) ([]*str
 	// 构造WHERE子句
 	whereClause := "(id = ? OR name LIKE ? OR " + commonKeyCol + " = ? OR " + baseURLCol + " LIKE ?) AND " + modelsCol + " LIKE ?"
 	args := []any{common.String2Int(keyword), "%" + keyword + "%", keyword, "%" + keyword + "%", "%" + model + "%"}
-	baseQuery = ApplyChannelGroupFilter(baseQuery.Where(whereClause, args...), group)
+	baseQuery = ApplyGroupContainsFilter(baseQuery.Where(whereClause, args...), group)
 
 	subQuery := baseQuery.
 		Select("tag").

@@ -31,6 +31,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { formatQuota, formatTimestamp } from '@/lib/format'
+import { parseGroupList } from '@/lib/group-list'
 
 import {
   USER_STATUS,
@@ -177,16 +178,28 @@ export function useUsersColumns(): ColumnDef<User>[] {
       header: t('Group'),
       cell: ({ row }) => {
         const group = row.getValue('group') as string
+        const groups = parseGroupList(group)
+        if (groups.length === 0) {
+          return (
+            <BadgeCell>
+              <GroupBadge group={group} />
+            </BadgeCell>
+          )
+        }
         return (
           <BadgeCell>
-            <GroupBadge group={group} />
+            <div className='flex flex-wrap gap-1'>
+              {groups.map((name) => (
+                <GroupBadge key={name} group={name} />
+              ))}
+            </div>
           </BadgeCell>
         )
       },
       filterFn: (row, id, value) => {
-        const group = String(row.getValue(id) || t('User Group')).toLowerCase()
+        const groups = parseGroupList(row.getValue(id) as string)
         const searchValue = String(value).toLowerCase()
-        return group.includes(searchValue)
+        return groups.some((group) => group.toLowerCase().includes(searchValue))
       },
       size: 140,
       meta: { mobileOrder: 30 },

@@ -85,16 +85,22 @@ func GetGroupRatio(name string) float64 {
 	return ratio
 }
 
+// GetGroupGroupRatio returns the special ratio configured for userGroup when
+// requests run in usingGroup. userGroup may be a comma-separated multi-group
+// list; groups are checked in list order and the first configured entry wins.
 func GetGroupGroupRatio(userGroup, usingGroup string) (float64, bool) {
-	gp, ok := groupGroupRatioMap.Get(userGroup)
-	if !ok {
-		return -1, false
+	for _, group := range common.SplitGroupList(userGroup) {
+		gp, ok := groupGroupRatioMap.Get(group)
+		if !ok {
+			continue
+		}
+		ratio, ok := gp[usingGroup]
+		if !ok {
+			continue
+		}
+		return ratio, true
 	}
-	ratio, ok := gp[usingGroup]
-	if !ok {
-		return -1, false
-	}
-	return ratio, true
+	return -1, false
 }
 
 func GroupGroupRatio2JSONString() string {

@@ -49,7 +49,7 @@ func recordRateLimitErrorLog(c *gin.Context, statusCode int, message string) {
 	tokenId := c.GetInt("token_id")
 	group := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 	if group == "" {
-		group = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+		group = common.PrimaryGroup(common.GetContextKeyString(c, constant.ContextKeyUserGroup))
 	}
 	modelName := getRateLimitModelName(c)
 
@@ -226,10 +226,10 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 		totalMaxCount := setting.ModelRequestRateLimitCount
 		successMaxCount := setting.ModelRequestRateLimitSuccessCount
 
-		// 获取分组
+		// 获取分组；多分组用户取主分组，避免逗号列表无法命中分组限流配置
 		group := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 		if group == "" {
-			group = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+			group = common.PrimaryGroup(common.GetContextKeyString(c, constant.ContextKeyUserGroup))
 		}
 
 		//获取分组的限流配置

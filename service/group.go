@@ -11,30 +11,39 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetUserUsableGroups returns the usable-group set for a user. userGroup may
+// be a comma-separated multi-group list; special usable rules are applied per
+// group in list order (later groups can remove groups added by earlier ones),
+// then every group the user belongs to is re-added so owned groups can never
+// be removed by special rules.
 func GetUserUsableGroups(userGroup string) map[string]string {
 	groupsCopy := setting.GetUserUsableGroupsCopy()
-	if userGroup != "" {
-		specialSettings, b := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(userGroup)
-		if b {
-			// 处理特殊可用分组
-			for specialGroup, desc := range specialSettings {
-				if strings.HasPrefix(specialGroup, "-:") {
-					// 移除分组
-					groupToRemove := strings.TrimPrefix(specialGroup, "-:")
-					delete(groupsCopy, groupToRemove)
-				} else if strings.HasPrefix(specialGroup, "+:") {
-					// 添加分组
-					groupToAdd := strings.TrimPrefix(specialGroup, "+:")
-					groupsCopy[groupToAdd] = desc
-				} else {
-					// 直接添加分组
-					groupsCopy[specialGroup] = desc
-				}
+	groups := common.SplitGroupList(userGroup)
+	for _, group := range groups {
+		specialSettings, b := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(group)
+		if !b {
+			continue
+		}
+		// 处理特殊可用分组
+		for specialGroup, desc := range specialSettings {
+			if strings.HasPrefix(specialGroup, "-:") {
+				// 移除分组
+				groupToRemove := strings.TrimPrefix(specialGroup, "-:")
+				delete(groupsCopy, groupToRemove)
+			} else if strings.HasPrefix(specialGroup, "+:") {
+				// 添加分组
+				groupToAdd := strings.TrimPrefix(specialGroup, "+:")
+				groupsCopy[groupToAdd] = desc
+			} else {
+				// 直接添加分组
+				groupsCopy[specialGroup] = desc
 			}
 		}
-		// 如果userGroup不在UserUsableGroups中，返回UserUsableGroups + userGroup
-		if _, ok := groupsCopy[userGroup]; !ok {
-			groupsCopy[userGroup] = "用户分组"
+	}
+	// 所属分组本身始终可选，不能被特殊规则移除
+	for _, group := range groups {
+		if _, ok := groupsCopy[group]; !ok {
+			groupsCopy[group] = "用户分组"
 		}
 	}
 	return groupsCopy

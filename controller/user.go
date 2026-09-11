@@ -674,6 +674,17 @@ func UpdateUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	updatedUser.Group = common.NormalizeGroupList(updatedUser.Group)
+	for _, group := range common.SplitGroupList(updatedUser.Group) {
+		if len(group) > common.MaxGroupNameLength {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+	}
+	if len(updatedUser.Group) > common.MaxUserGroupColumnLength {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
 	if updatedUser.Password == "" {
 		updatedUser.Password = "$I_LOVE_U" // make Validator happy :)
 	}
