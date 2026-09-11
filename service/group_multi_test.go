@@ -45,13 +45,14 @@ func TestGetUserUsableGroupsMultiGroupSpecialRulesAppliedInOrder(t *testing.T) {
 	configureMultiGroupTest(t)
 	specialUsable := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup
 	specialUsable.Set("group0", map[string]string{"+:premium": "Premium"})
-	specialUsable.Set("group1", map[string]string{"-:vip": ""})
+	specialUsable.Set("group1", map[string]string{"-:vip": "", "-:group0": ""})
 
 	groups := GetUserUsableGroups("group0,group1")
 
 	// group0 的规则先添加 premium，group1 的规则随后移除 vip
 	assert.Contains(t, groups, "premium")
 	assert.NotContains(t, groups, "vip")
+	// 所属分组本身始终可选，不能被其他所属分组的特殊规则移除
 	assert.Contains(t, groups, "group0")
 	assert.Contains(t, groups, "group1")
 }
