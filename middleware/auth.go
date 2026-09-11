@@ -460,6 +460,8 @@ func TokenAuth() func(c *gin.Context) {
 		userCache.WriteContext(c)
 
 		userGroup := userCache.Group
+		// 多分组用户（逗号分隔）默认使用第一个分组，令牌可指定其他可用分组
+		usingGroup := common.PrimaryGroup(userGroup)
 		tokenGroup := token.Group
 		if tokenGroup != "" {
 			// check common.UserUsableGroups[userGroup]
@@ -474,9 +476,9 @@ func TokenAuth() func(c *gin.Context) {
 					return
 				}
 			}
-			userGroup = tokenGroup
+			usingGroup = tokenGroup
 		}
-		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
 
 		err = SetupContextForToken(c, token, parts...)
 		if err != nil {

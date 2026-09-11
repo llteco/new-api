@@ -31,6 +31,7 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -71,6 +72,7 @@ import {
 } from '@/lib/admin-permissions'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
+import { parseGroupList } from '@/lib/group-list'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -356,37 +358,33 @@ export function UsersMutateDrawer({
                   <FormField
                     control={form.control}
                     name='group'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Group')}</FormLabel>
-                        <Select
-                          items={[
-                            ...groups.map((group) => ({
-                              value: group,
-                              label: group,
-                            })),
-                          ]}
-                          onValueChange={field.onChange}
-                          value={field.value}
-                        >
+                    render={({ field }) => {
+                      const selectedGroups = parseGroupList(field.value)
+                      const groupOptions = [
+                        ...new Set([...groups, ...selectedGroups]),
+                      ].map((group) => ({ value: group, label: group }))
+                      return (
+                        <FormItem>
+                          <FormLabel>{t('Group')}</FormLabel>
                           <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder={t('Select a group')} />
-                            </SelectTrigger>
+                            <MultiSelect
+                              options={groupOptions}
+                              selected={selectedGroups}
+                              onChange={(values) =>
+                                field.onChange(values.join(','))
+                              }
+                              placeholder={t('Select groups')}
+                            />
                           </FormControl>
-                          <SelectContent alignItemWithTrigger={false}>
-                            <SelectGroup>
-                              {groups.map((group) => (
-                                <SelectItem key={group} value={group}>
-                                  {group}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
+                          <FormDescription>
+                            {t(
+                              'Users can belong to multiple groups; the first one is the primary group.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )
+                    }}
                   />
 
                   <FormField

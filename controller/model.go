@@ -195,14 +195,18 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 		}, nil
 	}
 
-	group := userGroup
 	if tokenGroup != "" {
-		group = tokenGroup
+		return modelListGroups{
+			userGroup:   userGroup,
+			tokenGroup:  tokenGroup,
+			ownerGroups: []string{tokenGroup},
+		}, nil
 	}
+	// 多分组用户返回其所有分组下启用的模型
 	return modelListGroups{
 		userGroup:   userGroup,
 		tokenGroup:  tokenGroup,
-		ownerGroups: []string{group},
+		ownerGroups: common.SplitGroupList(userGroup),
 	}, nil
 }
 

@@ -302,7 +302,8 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	if group == "" {
 		user, err := model.GetUserById(task.UserId, false)
 		if err == nil {
-			group = user.Group
+			// 多分组用户按主分组（第一个分组）计费
+			group = common.PrimaryGroup(user.Group)
 		}
 	}
 	if group == "" {

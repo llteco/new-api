@@ -11,10 +11,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetUserUsableGroups returns the usable-group set for a user. userGroup may
+// be a comma-separated multi-group list; special usable rules are applied per
+// group in list order (later groups can remove groups added by earlier ones)
+// and every group the user belongs to is always included.
 func GetUserUsableGroups(userGroup string) map[string]string {
 	groupsCopy := setting.GetUserUsableGroupsCopy()
-	if userGroup != "" {
-		specialSettings, b := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(userGroup)
+	for _, group := range common.SplitGroupList(userGroup) {
+		specialSettings, b := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(group)
 		if b {
 			// 处理特殊可用分组
 			for specialGroup, desc := range specialSettings {
@@ -32,9 +36,9 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 				}
 			}
 		}
-		// 如果userGroup不在UserUsableGroups中，返回UserUsableGroups + userGroup
-		if _, ok := groupsCopy[userGroup]; !ok {
-			groupsCopy[userGroup] = "用户分组"
+		// 如果分组不在UserUsableGroups中，补充该分组本身
+		if _, ok := groupsCopy[group]; !ok {
+			groupsCopy[group] = "用户分组"
 		}
 	}
 	return groupsCopy

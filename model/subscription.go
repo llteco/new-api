@@ -268,7 +268,7 @@ type UserSubscription struct {
 	NextResetTime int64 `json:"next_reset_time" gorm:"type:bigint;default:0;index"`
 
 	UpgradeGroup  string `json:"upgrade_group" gorm:"type:varchar(64);default:''"`
-	PrevUserGroup string `json:"prev_user_group" gorm:"type:varchar(64);default:''"`
+	PrevUserGroup string `json:"prev_user_group" gorm:"type:varchar(1024);default:''"` // 可能是多分组用户的逗号列表快照
 
 	// Downgrade target group on expiry (snapshot from plan; empty = revert to PrevUserGroup)
 	DowngradeGroup string `json:"downgrade_group" gorm:"type:varchar(64);default:''"`

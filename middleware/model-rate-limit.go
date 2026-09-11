@@ -49,7 +49,7 @@ func recordRateLimitErrorLog(c *gin.Context, statusCode int, message string) {
 	tokenId := c.GetInt("token_id")
 	group := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
 	if group == "" {
-		group = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+		group = common.PrimaryGroup(common.GetContextKeyString(c, constant.ContextKeyUserGroup))
 	}
 	modelName := getRateLimitModelName(c)
 

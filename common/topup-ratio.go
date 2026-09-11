@@ -29,13 +29,17 @@ func UpdateTopupGroupRatioByJSONString(jsonStr string) error {
 	return json.Unmarshal([]byte(jsonStr), &topupGroupRatio)
 }
 
+// GetTopupGroupRatio returns the topup ratio for the given user group. name
+// may be a comma-separated multi-group list; groups are checked in list order
+// and the first configured entry wins.
 func GetTopupGroupRatio(name string) float64 {
 	topupGroupRatioMutex.RLock()
 	defer topupGroupRatioMutex.RUnlock()
-	ratio, ok := topupGroupRatio[name]
-	if !ok {
-		SysError("topup group ratio not found: " + name)
-		return 1
+	for _, group := range SplitGroupList(name) {
+		if ratio, ok := topupGroupRatio[group]; ok {
+			return ratio
+		}
 	}
-	return ratio
+	SysError("topup group ratio not found: " + name)
+	return 1
 }
