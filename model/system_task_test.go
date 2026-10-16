@@ -205,6 +205,40 @@ func TestFindEarliestPendingSystemTasks(t *testing.T) {
 	assert.Nil(t, tasks["missing"])
 }
 
+func TestGetLatestSystemTaskByStatus(t *testing.T) {
+	truncateTables(t)
+
+	none, err := GetLatestSystemTaskByStatus(SystemTaskTypeChannelTest, SystemTaskStatusSucceeded)
+	require.NoError(t, err)
+	require.Nil(t, none)
+
+	// Succeeded row first, then a newer failed row: only the succeeded run
+	// counts, so a failed run does not block the scheduler.
+	first, err := CreateSystemTask(SystemTaskTypeChannelTest, nil, nil)
+	require.NoError(t, err)
+	_, claimed, err := ClaimSystemTask(first.ID, SystemTaskTypeChannelTest, "runner-a", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, FinishSystemTask(first.TaskID, "runner-a", SystemTaskStatusSucceeded, nil, ""))
+
+	second, err := CreateSystemTask(SystemTaskTypeChannelTest, nil, nil)
+	require.NoError(t, err)
+	_, claimed, err = ClaimSystemTask(second.ID, SystemTaskTypeChannelTest, "runner-b", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, FinishSystemTask(second.TaskID, "runner-b", SystemTaskStatusFailed, nil, "boom"))
+
+	latestAny, err := GetLatestSystemTask(SystemTaskTypeChannelTest)
+	require.NoError(t, err)
+	require.NotNil(t, latestAny)
+	assert.Equal(t, second.TaskID, latestAny.TaskID)
+
+	latestSucceeded, err := GetLatestSystemTaskByStatus(SystemTaskTypeChannelTest, SystemTaskStatusSucceeded)
+	require.NoError(t, err)
+	require.NotNil(t, latestSucceeded)
+	assert.Equal(t, first.TaskID, latestSucceeded.TaskID)
+}
+
 func TestGetLatestSystemTask(t *testing.T) {
 	truncateTables(t)
 

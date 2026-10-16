@@ -63,6 +63,7 @@ const defaultOperationsSettings: OperationsSettings = {
   'log_export_setting.minute': 0,
   'log_export_setting.duration_days': 7,
   'log_export_setting.output_dir': '',
+  'log_export_setting.push_url': '',
 }
 
 export function OperationsSettings() {

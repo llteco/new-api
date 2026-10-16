@@ -373,6 +373,7 @@ export type OperationsSettings = {
   'log_export_setting.minute': number
   'log_export_setting.duration_days': number
   'log_export_setting.output_dir': string
+  'log_export_setting.push_url': string
 }
 
 export type SecuritySettings = {

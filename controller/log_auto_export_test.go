@@ -1,7 +1,13 @@
 package controller
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/stretchr/testify/assert"
@@ -152,4 +158,71 @@ func TestBuildLogExportData_RecordTimeAndOrder(t *testing.T) {
 	require.Len(t, data.Details, 2)
 	assert.Equal(t, "2025-07-03T16:00:00Z", data.Details[0].Time)
 	assert.Equal(t, "2025-07-03T17:00:00Z", data.Details[1].Time)
+}
+
+func shortenPushBackoff(t *testing.T) {
+	t.Helper()
+	orig := pushLogExportRetryBackoff
+	pushLogExportRetryBackoff = time.Millisecond
+	t.Cleanup(func() { pushLogExportRetryBackoff = orig })
+}
+
+func TestPushLogExport_Success(t *testing.T) {
+	var gotQuery url.Values
+	var gotMethod string
+	var gotContentType string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		gotMethod = r.Method
+		gotContentType = r.Header.Get("Content-Type")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":1}`))
+	}))
+	defer srv.Close()
+
+	body := []byte(`{"tokens":10,"users":{"a":{"m":10}}}`)
+	require.NoError(t, pushLogExport(context.Background(), srv.URL, "log-export-x.json", body))
+
+	assert.Equal(t, "log-export-x.json", gotQuery.Get("filename"))
+	assert.Equal(t, "POST", gotMethod)
+	assert.Equal(t, "application/json", gotContentType)
+	assert.JSONEq(t, string(body), string(gotBody))
+}
+
+func TestPushLogExport_RetriesThenSucceeds(t *testing.T) {
+	shortenPushBackoff(t)
+
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	require.NoError(t, pushLogExport(context.Background(), srv.URL, "f.json", []byte(`{}`)))
+	assert.Equal(t, 3, attempts)
+}
+
+func TestPushLogExport_FailsAfterAllRetries(t *testing.T) {
+	shortenPushBackoff(t)
+
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"detail":"tokens 必须是 >= 0 的整数"}`))
+	}))
+	defer srv.Close()
+
+	err := pushLogExport(context.Background(), srv.URL, "f.json", []byte(`{}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "400")
+	assert.Contains(t, err.Error(), "tokens")
+	assert.Equal(t, 3, attempts)
 }

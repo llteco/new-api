@@ -1,8 +1,12 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,8 +69,9 @@ func isWeeklyLogExportDue() bool {
 		return false
 	}
 
-	// Check if we already ran this week (after the target time)
-	latest, err := model.GetLatestSystemTask(model.SystemTaskTypeLogAutoExport)
+	// Check if we already ran this week (after the target time). Only
+	// successful runs count: a failed export is retried on the next check.
+	latest, err := model.GetLatestSystemTaskByStatus(model.SystemTaskTypeLogAutoExport, model.SystemTaskStatusSucceeded)
 	if err != nil {
 		return true
 	}
@@ -143,7 +148,58 @@ func runLogAutoExport(ctx context.Context) error {
 	}
 
 	logger.LogInfo(ctx, fmt.Sprintf("log auto export completed: %s (logs=%d, tokens=%d)", filePath, len(logs), data.Tokens))
+
+	if setting.PushUrl != "" {
+		if err := pushLogExport(ctx, setting.PushUrl, filename, jsonBytes); err != nil {
+			return fmt.Errorf("push export to %s failed: %w", setting.PushUrl, err)
+		}
+		logger.LogInfo(ctx, "log auto export pushed to "+setting.PushUrl)
+	}
 	return nil
+}
+
+// pushLogExportRetryBackoff is the pause between push attempts; tests shorten it.
+var pushLogExportRetryBackoff = 5 * time.Second
+
+// pushLogExport POSTs the exported JSON to pushURL with the export filename in
+// the filename query parameter. The receiver dedups by filename, so retries
+// are idempotent. Non-2xx and transport errors are retried to ride out a
+// restarting receiver; the response body (first 200 bytes) is surfaced in the
+// error so the receiving side's message stays visible.
+func pushLogExport(ctx context.Context, pushURL, filename string, body []byte) error {
+	sep := "?"
+	if strings.Contains(pushURL, "?") {
+		sep = "&"
+	}
+	target := pushURL + sep + "filename=" + url.QueryEscape(filename)
+	client := &http.Client{Timeout: 30 * time.Second}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(pushLogExportRetryBackoff):
+			}
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		resp.Body.Close()
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return nil
+		}
+		lastErr = fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return fmt.Errorf("push to %s failed after 3 attempts: %w", target, lastErr)
 }
 
 func buildLogExportData(logs []*model.Log) logAutoExportData {

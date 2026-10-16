@@ -203,6 +203,21 @@ func GetLatestSystemTask(taskType string) (*SystemTask, error) {
 	return &task, nil
 }
 
+// GetLatestSystemTaskByStatus returns the most recent task row of the given
+// type restricted to the given status, so schedulers can treat only
+// successful runs as done. Returns (nil, nil) when no such row exists.
+func GetLatestSystemTaskByStatus(taskType string, status SystemTaskStatus) (*SystemTask, error) {
+	var task SystemTask
+	err := DB.Where("type = ? AND status = ?", taskType, status).Order("id desc").First(&task).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &task, nil
+}
+
 func GetLatestSystemTasks(taskTypes []string) (map[string]*SystemTask, error) {
 	tasksByType := map[string]*SystemTask{}
 	if len(taskTypes) == 0 {

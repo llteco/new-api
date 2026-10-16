@@ -64,6 +64,7 @@ const logExportSchema = z.object({
     minute: z.coerce.number().min(0).max(59),
     duration_days: z.coerce.number().min(1).max(365),
     output_dir: z.string(),
+    push_url: z.string(),
   }),
 })
 
@@ -78,6 +79,7 @@ type FlatLogExportDefaults = {
   'log_export_setting.minute': number
   'log_export_setting.duration_days': number
   'log_export_setting.output_dir': string
+  'log_export_setting.push_url': string
 }
 
 type LogExportSettingsSectionProps = {
@@ -93,6 +95,7 @@ const buildFormDefaults = (defaults: FlatLogExportDefaults): LogExportFormInput 
     minute: defaults['log_export_setting.minute'] ?? 0,
     duration_days: defaults['log_export_setting.duration_days'] ?? 7,
     output_dir: defaults['log_export_setting.output_dir'] ?? '',
+    push_url: defaults['log_export_setting.push_url'] ?? '',
   },
 })
 
@@ -104,6 +107,7 @@ const normalizeDefaults = (defaults: FlatLogExportDefaults): FlatLogExportDefaul
   'log_export_setting.minute': defaults['log_export_setting.minute'] ?? 0,
   'log_export_setting.duration_days': defaults['log_export_setting.duration_days'] ?? 7,
   'log_export_setting.output_dir': defaults['log_export_setting.output_dir'] ?? '',
+  'log_export_setting.push_url': defaults['log_export_setting.push_url'] ?? '',
 })
 
 const normalizeFormValues = (values: LogExportFormValues): FlatLogExportDefaults => ({
@@ -114,6 +118,7 @@ const normalizeFormValues = (values: LogExportFormValues): FlatLogExportDefaults
   'log_export_setting.minute': values.log_export_setting.minute,
   'log_export_setting.duration_days': values.log_export_setting.duration_days,
   'log_export_setting.output_dir': values.log_export_setting.output_dir ?? '',
+  'log_export_setting.push_url': values.log_export_setting.push_url ?? '',
 })
 
 const WEEKDAY_OPTIONS = [
@@ -400,6 +405,31 @@ export function LogExportSettingsSection({
                       <Input
                         type='text'
                         placeholder={t('e.g., /var/log/new-api/exports')}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='log_export_setting.push_url'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Push URL')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Push the exported JSON to this URL after each export. Leave empty to disable.'
+                      )}
+                    </FormDescription>
+                    <FormControl>
+                      <Input
+                        type='text'
+                        placeholder={t(
+                          'e.g., http://token-usage.neospark.svc.cluster.local:8000/api/report'
+                        )}
                         {...field}
                       />
                     </FormControl>
