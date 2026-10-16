@@ -23,6 +23,9 @@ type LogExportSetting struct {
 	DurationDays int `json:"duration_days"`
 	// 导出目录，留空使用默认日志目录
 	OutputDir string `json:"output_dir"`
+	// 推送 URL，导出成功后把 JSON POST 到该地址（?filename= 随文件名），
+	// 留空不推送。接收端按 filename 幂等去重。
+	PushUrl string `json:"push_url"`
 }
 
 // 默认配置：每周五 18:00 导出过去 7 天的日志
@@ -34,6 +37,7 @@ var logExportSetting = LogExportSetting{
 	Minute:          0,
 	DurationDays:    7,
 	OutputDir:       "",
+	PushUrl:         "",
 }
 
 func init() {

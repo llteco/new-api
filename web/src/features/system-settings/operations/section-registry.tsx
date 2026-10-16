@@ -115,6 +115,7 @@ const OPERATIONS_SECTIONS = [
           'log_export_setting.minute': settings['log_export_setting.minute'] ?? 0,
           'log_export_setting.duration_days': settings['log_export_setting.duration_days'] ?? 7,
           'log_export_setting.output_dir': settings['log_export_setting.output_dir'] ?? '',
+          'log_export_setting.push_url': settings['log_export_setting.push_url'] ?? '',
         }}
       />
     ),
