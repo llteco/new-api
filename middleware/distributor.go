@@ -30,28 +30,61 @@ type ModelRequest struct {
 	Group string `json:"group,omitempty"`
 }
 
+// abortDistributeWithErrorLog rejects the request and records a relay error log
+// (type=LogTypeError) for it. Distribute runs after TokenAuth, so every request
+// reaching these aborts is authenticated; unauthenticated access (wrong token,
+// unknown API path) never gets here and is therefore never logged.
+func abortDistributeWithErrorLog(c *gin.Context, statusCode int, message string, modelName string, channelId int, code ...types.ErrorCode) {
+	abortWithOpenAiMessage(c, statusCode, message, code...)
+	if !constant.ErrorLogEnabled {
+		return
+	}
+	userId := c.GetInt("id")
+	if userId == 0 {
+		return
+	}
+	group := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
+	if group == "" {
+		group = common.PrimaryGroup(common.GetContextKeyString(c, constant.ContextKeyUserGroup))
+	}
+	other := make(map[string]interface{})
+	if c.Request != nil && c.Request.URL != nil {
+		other["request_path"] = c.Request.URL.Path
+	}
+	other["status_code"] = statusCode
+	other["error_type"] = types.ErrorTypeNewAPIError
+	if len(code) > 0 {
+		other["error_code"] = code[0]
+	}
+	if channelId > 0 {
+		other["channel_id"] = channelId
+	}
+	content := fmt.Sprintf("status_code=%d, %s", statusCode, message)
+	model.RecordErrorLog(c, userId, channelId, modelName, c.GetString("token_name"), content, c.GetInt("token_id"), 0, false, group, other)
+}
+
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		var channel *model.Channel
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
-			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+			abortDistributeWithErrorLog(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}), "", 0, types.ErrorCodeInvalidRequest)
 			return
 		}
 		if ok {
 			id, err := strconv.Atoi(channelId.(string))
 			if err != nil {
-				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
+				abortDistributeWithErrorLog(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId), modelRequest.Model, 0, types.ErrorCodeInvalidRequest)
 				return
 			}
 			channel, err = model.GetChannelById(id, true)
 			if err != nil {
-				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
+				abortDistributeWithErrorLog(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId), modelRequest.Model, id, types.ErrorCodeInvalidRequest)
 				return
 			}
 			if channel.Status != common.ChannelStatusEnabled {
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
+				abortDistributeWithErrorLog(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled), modelRequest.Model, channel.Id, types.ErrorCodeAccessDenied)
 				return
 			}
 		} else {
@@ -62,7 +95,7 @@ func Distribute() func(c *gin.Context) {
 				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 				if !ok {
 					// token model limit is empty, all models are not allowed
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
+					abortDistributeWithErrorLog(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess), modelRequest.Model, 0, types.ErrorCodeAccessDenied)
 					return
 				}
 				var tokenModelLimit map[string]bool
@@ -72,14 +105,14 @@ func Distribute() func(c *gin.Context) {
 				}
 				matchName := ratio_setting.FormatMatchingModelName(modelRequest.Model) // match gpts & thinking-*
 				if _, ok := tokenModelLimit[matchName]; !ok {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
+					abortDistributeWithErrorLog(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}), modelRequest.Model, 0, types.ErrorCodeAccessDenied)
 					return
 				}
 			}
 
 			if shouldSelectChannel {
 				if modelRequest.Model == "" {
-					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
+					abortDistributeWithErrorLog(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired), "", 0, types.ErrorCodeInvalidRequest)
 					return
 				}
 				var selectGroup string
@@ -89,14 +122,14 @@ func Distribute() func(c *gin.Context) {
 					playgroundRequest := &dto.PlayGroundRequest{}
 					err = common.UnmarshalBodyReusable(c, playgroundRequest)
 					if err != nil {
-						abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
+						abortDistributeWithErrorLog(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}), modelRequest.Model, 0, types.ErrorCodeInvalidRequest)
 						return
 					}
 					if playgroundRequest.Group != "" {
 						// 多分组用户按其完整分组集合校验可用性
 						userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 						if !service.GroupInUserUsableGroups(userGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
-							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
+							abortDistributeWithErrorLog(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied), modelRequest.Model, 0, types.ErrorCodeAccessDenied)
 							return
 						}
 						usingGroup = playgroundRequest.Group
@@ -153,11 +186,11 @@ func Distribute() func(c *gin.Context) {
 						//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
 						//	message = "数据库一致性已被破坏，请联系管理员"
 						//}
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, message, types.ErrorCodeModelNotFound)
+						abortDistributeWithErrorLog(c, http.StatusServiceUnavailable, message, modelRequest.Model, 0, types.ErrorCodeModelNotFound)
 						return
 					}
 					if channel == nil {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
+						abortDistributeWithErrorLog(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), modelRequest.Model, 0, types.ErrorCodeModelNotFound)
 						return
 					}
 				}
@@ -182,9 +215,9 @@ func Distribute() func(c *gin.Context) {
 						showGroup = fmt.Sprintf("auto(%s)", g)
 					}
 				}
-				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorChannelNoAvailableKey, map[string]any{"Group": showGroup, "Model": modelRequest.Model}), types.ErrorCodeChannelNoAvailableKey)
+				abortDistributeWithErrorLog(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorChannelNoAvailableKey, map[string]any{"Group": showGroup, "Model": modelRequest.Model}), modelRequest.Model, channel.Id, types.ErrorCodeChannelNoAvailableKey)
 			} else {
-				abortWithOpenAiMessage(c, setupErr.StatusCode, setupErr.Error(), setupErr.GetErrorCode())
+				abortDistributeWithErrorLog(c, setupErr.StatusCode, setupErr.Error(), modelRequest.Model, channel.Id, setupErr.GetErrorCode())
 			}
 			return
 		}
