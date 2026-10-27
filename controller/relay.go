@@ -92,6 +92,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+			recordRelayErrorLog(c, newAPIError)
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -400,41 +401,60 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
-	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
-		// 保存错误日志到mysql中
-		userId := c.GetInt("id")
-		tokenName := c.GetString("token_name")
-		modelName := c.GetString("original_model")
-		tokenId := c.GetInt("token_id")
-		userGroup := c.GetString("group")
-		channelId := c.GetInt("channel_id")
-		other := make(map[string]interface{})
-		if c.Request != nil && c.Request.URL != nil {
-			other["request_path"] = c.Request.URL.Path
-		}
-		other["error_type"] = err.GetErrorType()
-		other["error_code"] = err.GetErrorCode()
-		other["status_code"] = err.StatusCode
-		other["channel_id"] = channelId
-		other["channel_name"] = c.GetString("channel_name")
-		other["channel_type"] = c.GetInt("channel_type")
-		adminInfo := make(map[string]interface{})
-		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
-		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
-		if isMultiKey {
-			adminInfo["is_multi_key"] = true
-			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
-		}
-		service.AppendChannelAffinityAdminInfo(c, adminInfo)
-		other["admin_info"] = adminInfo
-		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
-		if startTime.IsZero() {
-			startTime = time.Now()
-		}
-		useTimeSeconds := int(time.Since(startTime).Seconds())
-		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
-	}
+	recordChannelErrorLog(c, err)
+}
 
+// recordChannelErrorLog 将一次失败的请求写入错误日志（type=LogTypeError），并打上
+// ContextKeyRelayErrorLogRecorded 标记；请求级的补记逻辑依据该标记避免重复记录。
+// 未开启错误日志（ERROR_LOG_ENABLED）或错误自身声明不记录（types.IsRecordErrorLog，
+// 如额度不足）时不落库。
+func recordChannelErrorLog(c *gin.Context, err *types.NewAPIError) {
+	if !constant.ErrorLogEnabled || !types.IsRecordErrorLog(err) {
+		return
+	}
+	common.SetContextKey(c, constant.ContextKeyRelayErrorLogRecorded, true)
+	// 保存错误日志到mysql中
+	userId := c.GetInt("id")
+	tokenName := c.GetString("token_name")
+	modelName := c.GetString("original_model")
+	tokenId := c.GetInt("token_id")
+	userGroup := c.GetString("group")
+	channelId := c.GetInt("channel_id")
+	other := make(map[string]interface{})
+	if c.Request != nil && c.Request.URL != nil {
+		other["request_path"] = c.Request.URL.Path
+	}
+	other["error_type"] = err.GetErrorType()
+	other["error_code"] = err.GetErrorCode()
+	other["status_code"] = err.StatusCode
+	other["channel_id"] = channelId
+	other["channel_name"] = c.GetString("channel_name")
+	other["channel_type"] = c.GetInt("channel_type")
+	adminInfo := make(map[string]interface{})
+	adminInfo["use_channel"] = c.GetStringSlice("use_channel")
+	isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
+	if isMultiKey {
+		adminInfo["is_multi_key"] = true
+		adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
+	}
+	service.AppendChannelAffinityAdminInfo(c, adminInfo)
+	other["admin_info"] = adminInfo
+	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	useTimeSeconds := int(time.Since(startTime).Seconds())
+	model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+}
+
+// recordRelayErrorLog 为已授权用户的失败请求补记错误日志。渠道错误已在
+// processChannelError 中随重试逐次记录（带标记），这里只补充未经渠道错误处理的
+// 失败（请求体非法、模型定价失败、无可用渠道等），同一请求最多补记一条。
+func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError) {
+	if _, recorded := common.GetContextKey(c, constant.ContextKeyRelayErrorLogRecorded); recorded {
+		return
+	}
+	recordChannelErrorLog(c, err)
 }
 
 func RelayMidjourney(c *gin.Context) {
@@ -477,6 +497,8 @@ func RelayMidjourney(c *gin.Context) {
 		})
 		channelId := c.GetInt("channel_id")
 		logger.LogError(c, fmt.Sprintf("relay error (channel #%d, status code %d): %s", channelId, statusCode, fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result)))
+		// MJ 链路没有 processChannelError，这里即该链路的错误日志记录
+		recordChannelErrorLog(c, types.NewErrorWithStatusCode(fmt.Errorf("%s %s", mjErr.Description, mjErr.Result), types.ErrorCode(fmt.Sprintf("midjourney:%d", mjErr.Code)), statusCode))
 	}
 }
 
@@ -637,8 +659,21 @@ func RelayTask(c *gin.Context) {
 	}
 
 	if taskErr != nil {
+		recordTaskErrorLog(c, taskErr)
 		respondTaskError(c, taskErr)
 	}
+}
+
+// recordTaskErrorLog 为任务提交失败补记错误日志。上游失败（LocalError=false）已随
+// processChannelError 记录并打上标记，这里只补记本地校验/转换失败（请求参数非法等）。
+func recordTaskErrorLog(c *gin.Context, taskErr *taskdto.TaskError) {
+	if taskErr == nil || !taskErr.LocalError {
+		return
+	}
+	if _, recorded := common.GetContextKey(c, constant.ContextKeyRelayErrorLogRecorded); recorded {
+		return
+	}
+	recordChannelErrorLog(c, types.NewErrorWithStatusCode(taskErr.Error, types.ErrorCode(taskErr.Code), taskErr.StatusCode))
 }
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）

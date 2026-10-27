@@ -73,4 +73,10 @@ const (
 	// fallback in authHelper (finishAdminAudit) skips its record to avoid
 	// duplicate entries.
 	ContextKeyAuditLogged ContextKey = "audit_logged"
+
+	// ContextKeyRelayErrorLogRecorded marks that the current request has already
+	// recorded a relay error log (type=LogTypeError) via processChannelError.
+	// When set, request-level fallbacks skip recording so a failed request is
+	// not logged twice.
+	ContextKeyRelayErrorLogRecorded ContextKey = "relay_error_log_recorded"
 )
