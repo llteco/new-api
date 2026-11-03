@@ -88,6 +88,17 @@ export const channelSchema = z.object({
 
 export type Channel = z.infer<typeof channelSchema>
 
+/**
+ * Update payload fields that are not part of the channel response model.
+ * `is_multi_key` converts the channel between single-key and multi-key storage.
+ */
+export type ChannelUpdatePayload = Partial<Channel> & {
+  is_multi_key?: boolean
+  key_mode?: 'append' | 'replace'
+  multi_key_mode?: 'random' | 'polling'
+  multi_key_limit_patterns?: LimitPattern[]
+}
+
 // ============================================================================
 // Channel Settings Types
 // ============================================================================

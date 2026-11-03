@@ -30,6 +30,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { createChannel, updateChannel } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
+  applyMultiKeyUpdateFields,
   transformFormDataToCreatePayload,
   transformFormDataToUpdatePayload,
   type ChannelFormValues,
@@ -39,7 +40,6 @@ import type { Channel } from '../types'
 type UseChannelMutateFormParams = {
   currentRow?: Channel | null
   isEditing: boolean
-  isMultiKeyChannel: boolean
   onSuccess: () => void
 }
 
@@ -104,21 +104,13 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
             delete payload[field]
           }
         }
-        const payloadWithKeyMode =
-          canEditSensitive &&
-          props.isMultiKeyChannel &&
-          data.key?.trim() &&
-          data.key_mode
-            ? {
-                ...payload,
-                key_mode: data.key_mode,
-              }
-            : payload
+        const updatePayload = applyMultiKeyUpdateFields(payload, data, {
+          currentIsMultiKey:
+            props.currentRow.channel_info.is_multi_key === true,
+          canEditSensitive,
+        })
 
-        const response = await updateChannel(
-          props.currentRow.id,
-          payloadWithKeyMode
-        )
+        const response = await updateChannel(props.currentRow.id, updatePayload)
         if (!response.success) {
           throw new Error(response.message || t(ERROR_MESSAGES.UPDATE_FAILED))
         }

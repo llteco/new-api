@@ -935,7 +935,8 @@ type PatchChannel struct {
 	model.Channel
 	MultiKeyMode          *string               `json:"multi_key_mode"`
 	MultiKeyLimitPatterns *[]model.LimitPattern `json:"multi_key_limit_patterns"`
-	KeyMode               *string               `json:"key_mode"` // 多key模式下密钥覆盖或者追加
+	KeyMode               *string               `json:"key_mode"`     // 多key模式下密钥覆盖或者追加
+	IsMultiKey            *bool                 `json:"is_multi_key"` // 单key/多key模式转换，nil 表示不转换
 }
 
 type ChannelStatusRequest struct {
@@ -1003,12 +1004,74 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 
-	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
-	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
-		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(*channel.MultiKeyMode)
+	convertedToSingleKey := false
+	if channel.IsMultiKey != nil && *channel.IsMultiKey != originChannel.ChannelInfo.IsMultiKey {
+		if *channel.IsMultiKey {
+			// 单 key -> 多 key：重建状态，避免继承旧渠道上残留的 per-key 数据。
+			channel.ChannelInfo = model.ChannelInfo{
+				IsMultiKey:   true,
+				MultiKeyMode: constant.MultiKeyModeRandom,
+			}
+		} else {
+			// 多 key -> 单 key：只保留一个可用 key，并清空 per-key 状态。
+			if key := strings.TrimSpace(channel.Key); key != "" {
+				if strings.ContainsAny(key, "\r\n") {
+					c.JSON(http.StatusOK, gin.H{
+						"success": false,
+						"message": "转换为单密钥时只能保留一个密钥",
+					})
+					return
+				}
+				channel.Key = key
+			} else {
+				keys := originChannel.GetKeys()
+				if len(keys) == 0 {
+					c.JSON(http.StatusOK, gin.H{
+						"success": false,
+						"message": "渠道没有可用的密钥",
+					})
+					return
+				}
+				channel.Key = ""
+				for idx, key := range keys {
+					status := common.ChannelStatusEnabled
+					if originChannel.ChannelInfo.MultiKeyStatusList != nil {
+						if s, ok := originChannel.ChannelInfo.MultiKeyStatusList[idx]; ok {
+							status = s
+						}
+					}
+					if status == common.ChannelStatusEnabled {
+						channel.Key = key
+						break
+					}
+				}
+				if channel.Key == "" {
+					c.JSON(http.StatusOK, gin.H{
+						"success": false,
+						"message": "渠道没有可用的密钥，请填写一个密钥",
+					})
+					return
+				}
+			}
+			channel.ChannelInfo = model.ChannelInfo{}
+			convertedToSingleKey = true
+		}
 	}
 
-	if channel.MultiKeyLimitPatterns != nil {
+	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
+	if channel.ChannelInfo.IsMultiKey && channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
+		mode := constant.MultiKeyMode(*channel.MultiKeyMode)
+		if mode != constant.MultiKeyModeRandom && mode != constant.MultiKeyModePolling {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "不支持的多密钥策略",
+			})
+			return
+		}
+		channel.ChannelInfo.MultiKeyMode = mode
+	}
+
+	if channel.ChannelInfo.IsMultiKey && channel.MultiKeyLimitPatterns != nil {
 		channel.ChannelInfo.MultiKeyLimitPatterns = *channel.MultiKeyLimitPatterns
 	}
 
@@ -1097,6 +1160,15 @@ func UpdateChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if convertedToSingleKey {
+		// channel.Update reloads the row, so reset the in-memory value before
+		// persisting: GORM's struct updates skip the zero-value ChannelInfo.
+		channel.ChannelInfo = model.ChannelInfo{}
+		if err := channel.SaveChannelInfo(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	model.InitChannelCache()
 	if proxyChanged {
 		service.InvalidateProxyClient(originProxy)
@@ -1114,6 +1186,9 @@ func UpdateChannel(c *gin.Context) {
 	}
 	if !equalStringPtr(channel.BaseURL, originChannel.BaseURL) {
 		changedFields = append(changedFields, "base_url")
+	}
+	if channel.ChannelInfo.IsMultiKey != originChannel.ChannelInfo.IsMultiKey {
+		changedFields = append(changedFields, "is_multi_key")
 	}
 	if channel.Key != "" && channel.Key != originChannel.Key {
 		changedFields = append(changedFields, "key")
@@ -2255,4 +2330,3 @@ func OllamaVersion(c *gin.Context) {
 		},
 	})
 }
-

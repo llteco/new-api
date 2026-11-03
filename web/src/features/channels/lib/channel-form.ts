@@ -27,7 +27,7 @@ import {
   MODEL_FETCHABLE_TYPES,
   OPENAI_FIELD_PASSTHROUGH_TYPES,
 } from '../constants'
-import type { Channel, LimitPattern } from '../types'
+import type { Channel, ChannelUpdatePayload, LimitPattern } from '../types'
 import {
   CHANNEL_TYPE_ADVANCED_CUSTOM,
   advancedCustomConfigUsesRelativeUpstreamPath,
@@ -268,6 +268,7 @@ export const channelFormSchema = z
       .optional(),
     batch_add_set_key_prefix_2_name: z.boolean().optional(),
     key_mode: z.enum(['append', 'replace']).optional(), // For editing multi-key channels
+    is_multi_key: z.boolean().optional(), // Convert between single-key and multi-key when editing
     // Channel extra settings (stored in setting JSON, not sent directly)
     force_format: z.boolean().optional(),
     thinking_to_content: z.boolean().optional(),
@@ -444,6 +445,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   multi_key_limit_patterns: [],
   batch_add_set_key_prefix_2_name: false,
   key_mode: 'append',
+  is_multi_key: false,
   // Channel extra settings
   force_format: false,
   thinking_to_content: false,
@@ -597,6 +599,7 @@ export function transformChannelToFormDefaults(
       channel.channel_info.multi_key_limit_patterns ?? [],
     batch_add_set_key_prefix_2_name: false,
     key_mode: 'append', // Default to append mode for editing multi-key channels
+    is_multi_key: channel.channel_info.is_multi_key,
     // Channel extra settings
     ...extraSettings,
     // Type-specific settings
@@ -839,7 +842,9 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     multi_key_mode:
       mode === 'multi_to_single' ? formData.multi_key_type : undefined,
     multi_key_limit_patterns:
-      mode === 'multi_to_single' ? (formData.multi_key_limit_patterns ?? []) : undefined,
+      mode === 'multi_to_single'
+        ? (formData.multi_key_limit_patterns ?? [])
+        : undefined,
     batch_add_set_key_prefix_2_name:
       mode === 'batch' ? formData.batch_add_set_key_prefix_2_name : undefined,
     channel,
@@ -900,10 +905,44 @@ export function transformFormDataToUpdatePayload(
   payload.header_override = formData.header_override || ''
 
   if (formData.multi_key_limit_patterns) {
-    ;(payload as Record<string, unknown>).multi_key_limit_patterns = formData.multi_key_limit_patterns
+    ;(payload as Record<string, unknown>).multi_key_limit_patterns =
+      formData.multi_key_limit_patterns
   }
 
   return payload
+}
+
+/**
+ * Add multi-key conversion and strategy fields to a channel update payload.
+ * `is_multi_key` is only sent when the operator actually switched the storage
+ * mode, so ordinary edits never trigger a conversion.
+ */
+export function applyMultiKeyUpdateFields(
+  payload: ChannelUpdatePayload,
+  formData: ChannelFormValues,
+  options: { currentIsMultiKey: boolean; canEditSensitive: boolean }
+): ChannelUpdatePayload {
+  if (!options.canEditSensitive) {
+    return payload
+  }
+
+  const targetIsMultiKey = formData.is_multi_key ?? options.currentIsMultiKey
+  const updatePayload: ChannelUpdatePayload = { ...payload }
+
+  if (targetIsMultiKey && formData.key?.trim() && formData.key_mode) {
+    updatePayload.key_mode = formData.key_mode
+  }
+  if (
+    formData.is_multi_key !== undefined &&
+    formData.is_multi_key !== options.currentIsMultiKey
+  ) {
+    updatePayload.is_multi_key = formData.is_multi_key
+  }
+  if (targetIsMultiKey && formData.multi_key_type) {
+    updatePayload.multi_key_mode = formData.multi_key_type
+  }
+
+  return updatePayload
 }
 
 // ============================================================================

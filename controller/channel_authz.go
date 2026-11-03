@@ -9,6 +9,9 @@ func channelHasSensitiveChanges(channel *PatchChannel, origin *model.Channel, re
 	if _, ok := requestData["key"]; ok && channel.Key != "" && channel.Key != origin.Key {
 		return true
 	}
+	if _, ok := requestData["is_multi_key"]; ok && channel.IsMultiKey != nil && *channel.IsMultiKey != origin.ChannelInfo.IsMultiKey {
+		return true
+	}
 	if _, ok := requestData["base_url"]; ok && !equalStringPtr(channel.BaseURL, origin.BaseURL) {
 		return true
 	}
@@ -71,6 +74,7 @@ var channelSensitiveFields = map[string]struct{}{
 	"other":               {},
 	"settings":            {},
 	"key_mode":            {},
+	"is_multi_key":        {},
 }
 
 // channelOperationalFields lists fields managed by operation endpoints instead
