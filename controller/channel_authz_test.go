@@ -45,6 +45,14 @@ func TestChannelHasSensitiveChanges(t *testing.T) {
 		assert.True(t, channelHasSensitiveChanges(&updated, origin, map[string]any{"key": updated.Key}))
 	})
 
+	t.Run("multi-key conversion", func(t *testing.T) {
+		updated := PatchChannel{Channel: *origin}
+		converted := true
+		updated.IsMultiKey = &converted
+
+		assert.True(t, channelHasSensitiveChanges(&updated, origin, map[string]any{"is_multi_key": true}))
+	})
+
 	t.Run("base url change", func(t *testing.T) {
 		updated := PatchChannel{Channel: *origin}
 		newBaseURL := "https://leak.example.com"

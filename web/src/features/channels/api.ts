@@ -27,6 +27,7 @@ import type {
   ChannelBalanceResponse,
   ChannelOpsResponse,
   ChannelTestResponse,
+  ChannelUpdatePayload,
   CopyChannelParams,
   CopyChannelResponse,
   FetchModelsResponse,
@@ -129,7 +130,7 @@ export async function createChannel(
  */
 export async function updateChannel(
   id: number,
-  data: Partial<Channel>
+  data: ChannelUpdatePayload
 ): Promise<{ success: boolean; message?: string; data?: Channel }> {
   const res = await api.put(
     '/api/channel/',

@@ -80,6 +80,10 @@ type ChannelInfo struct {
 	MultiKeyLimitPatterns  []LimitPattern        `json:"multi_key_limit_patterns,omitempty"`  // 多Key限流匹配模式列表
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
+
+	// baseline 记录最近一次从数据库加载时的原始 JSON，供 SaveChannelInfo 做
+	// 乐观并发校验；不参与序列化。
+	baseline string
 }
 
 type ChannelSortOptions struct {
@@ -184,6 +188,7 @@ func (c ChannelInfo) Value() (driver.Value, error) {
 // Scan implements sql.Scanner interface
 func (c *ChannelInfo) Scan(value interface{}) error {
 	bytesValue, _ := value.([]byte)
+	c.baseline = string(bytesValue)
 	return common.Unmarshal(bytesValue, c)
 }
 
@@ -278,7 +283,7 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		selectedIdx := enabledIdx[rand.Intn(len(enabledIdx))]
 		// random mode has no deferred save, so persist any cooldown cleanup
 		if cleanedUp {
-			_ = channel.SaveChannelInfo()
+			_, _ = channel.SaveChannelInfo()
 		}
 		return keys[selectedIdx], selectedIdx, nil
 	case constant.MultiKeyModePolling:
@@ -293,7 +298,7 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 				logger.LogDebug(nil, "channel %d polling index: %d", channel.Id, channel.ChannelInfo.MultiKeyPollingIndex)
 			}
 			if !common.MemoryCacheEnabled {
-				_ = channel.SaveChannelInfo()
+				_, _ = channel.SaveChannelInfo()
 			} else {
 				// CacheUpdateChannel(channel)
 			}
@@ -319,8 +324,53 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	}
 }
 
-func (channel *Channel) SaveChannelInfo() error {
-	return DB.Model(channel).Update("channel_info", channel.ChannelInfo).Error
+// channelInfoCasQuery 为查询附加 channel_info 的乐观并发谓词（三方言统一按文本
+// 与加载基线比较）。SaveChannelInfo 与 saveStatusState 共用。
+func channelInfoCasQuery(query *gorm.DB, baseline string) *gorm.DB {
+	switch {
+	case common.UsingMainDatabase(common.DatabaseTypePostgreSQL):
+		// PostgreSQL 的 json 类型没有等值运算符，按文本比较
+		return query.Where("channel_info::text = ?", baseline)
+	case common.UsingMainDatabase(common.DatabaseTypeMySQL):
+		// MySQL 不会把字符串参数解析成 JSON 再与 JSON 列比较（json_col = ? 恒不
+		// 匹配，已实测），统一按文本比较；JSON 列 CAST 成 CHAR 即驱动读回的文本
+		return query.Where("CAST(channel_info AS CHAR) = ?", baseline)
+	default:
+		// SQLite 以 BLOB 存储 JSON，需转成文本比较
+		return query.Where("CAST(channel_info AS TEXT) = ?", baseline)
+	}
+}
+
+// refreshChannelInfoBaseline 回读数据库实际存储的 channel_info 文本刷新 CAS 基线。
+// MySQL 以规范化文本（键重排、分隔符加空格）存储 JSON 列，与 Go marshal 文本永不
+// 相等；基线必须取数据库文本，同一对象的后续 CAS 才不会伪冲突。
+func (channel *Channel) refreshChannelInfoBaseline() {
+	var stored string
+	if err := DB.Model(&Channel{}).Where("id = ?", channel.Id).Select("channel_info").Scan(&stored).Error; err != nil {
+		common.SysError(fmt.Sprintf("failed to reload channel_info baseline: channel_id=%d, error=%v", channel.Id, err))
+		return
+	}
+	channel.ChannelInfo.baseline = stored
+}
+
+// SaveChannelInfo 回写 channel_info，并带乐观并发校验：若自快照加载后该列已被
+// 其他写入方（如密钥模式转换）修改，则放弃回写，避免请求携带的过期多 key 元数据
+// 覆盖转换后的新状态。返回值报告本次是否落库，调用方可据此重载快照重放变更；
+// 冷却清理/轮询索引丢失一次回写是安全的，下次请求会重做。
+func (channel *Channel) SaveChannelInfo() (bool, error) {
+	query := DB.Model(channel)
+	if baseline := channel.ChannelInfo.baseline; baseline != "" {
+		query = channelInfoCasQuery(query, baseline)
+	}
+	result := query.Update("channel_info", channel.ChannelInfo)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return false, nil
+	}
+	channel.refreshChannelInfoBaseline()
+	return true, nil
 }
 
 func (channel *Channel) GetModels() []string {
@@ -386,18 +436,38 @@ func (channel *Channel) Save() error {
 // saveStatusState persists only the fields owned by the channel status flow.
 // Keeping this allowlist here prevents a stale channel snapshot from
 // overwriting credentials, accounting counters, or channel configuration.
-func (channel *Channel) saveStatusState() error {
+// 单 key 渠道直接落 status/other_info；多 key 渠道的 status/other_info/channel_info
+// 通过一条带 CAS 谓词的 UPDATE 同生共死——先落 status 再被 CAS 拒绝（如密钥模式
+// 转换竞态）会把已转换的渠道整体禁用。RowsAffected=0（并发冲突或 MySQL 对无变化
+// 写计 0 行）由调用方重载快照重放；返回值报告是否落库。
+func (channel *Channel) saveStatusState() (bool, error) {
 	if channel.Id == 0 {
-		return errors.New("channel ID is 0")
+		return false, errors.New("channel ID is 0")
 	}
 	updates := map[string]any{
 		"status":     channel.Status,
 		"other_info": channel.OtherInfo,
 	}
-	if channel.ChannelInfo.IsMultiKey {
-		updates["channel_info"] = channel.ChannelInfo
+	if !channel.ChannelInfo.IsMultiKey {
+		if err := DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
+			return false, err
+		}
+		return true, nil
 	}
-	return DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error
+	updates["channel_info"] = channel.ChannelInfo
+	query := DB.Model(&Channel{}).Where("id = ?", channel.Id)
+	if baseline := channel.ChannelInfo.baseline; baseline != "" {
+		query = channelInfoCasQuery(query, baseline)
+	}
+	result := query.Updates(updates)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return false, nil
+	}
+	channel.refreshChannelInfoBaseline()
+	return true, nil
 }
 
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
@@ -577,6 +647,18 @@ func (channel *Channel) Insert() error {
 }
 
 func (channel *Channel) Update() error {
+	return channel.update(false)
+}
+
+// UpdateWithChannelInfo behaves like Update but commits ChannelInfo in the same
+// transaction even when it is zero-valued (struct Updates skip zero fields).
+// Converting a multi-key channel to single-key relies on this so the retained
+// key and the cleared per-key metadata can never diverge.
+func (channel *Channel) UpdateWithChannelInfo() error {
+	return channel.update(true)
+}
+
+func (channel *Channel) update(withChannelInfo bool) error {
 	// If this is a multi-key channel, recalculate MultiKeySize based on the current key list to avoid inconsistency after editing keys
 	if channel.ChannelInfo.IsMultiKey {
 		var keyStr string
@@ -622,8 +704,15 @@ func (channel *Channel) Update() error {
 			}
 		}
 	}
-	var err error
-	err = DB.Model(channel).Updates(channel).Error
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(channel).Updates(channel).Error; err != nil {
+			return err
+		}
+		if withChannelInfo {
+			return tx.Model(channel).Update("channel_info", channel.ChannelInfo).Error
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
@@ -845,6 +934,10 @@ func updateChannelStatusWithCooldown(channelId int, usingKey string, status int,
 		if channelCache == nil {
 			return false
 		}
+		// 与 DB 路径同款守卫：陈旧 usingKey 不得处置已转换的单 key 渠道
+		if usingKey != "" && !channelCache.ChannelInfo.IsMultiKey && usingKey != channelCache.Key {
+			return false
+		}
 		if channelCache.ChannelInfo.IsMultiKey {
 			beforeStatus := channelCache.Status
 			// 如果是多Key模式，更新缓存中的状态
@@ -872,14 +965,23 @@ func updateChannelStatusWithCooldown(channelId int, usingKey string, status int,
 			}
 		}
 	}()
-	channel, err := GetChannelById(channelId, true)
-	if err != nil {
-		return false
-	} else {
+	// 多 key 渠道的 channel_info 带乐观并发校验；被并发写入（如其他实例推进轮询
+	// 游标）挤掉时，重载快照重放本次变更，避免 per-key 禁用状态反复丢失。发现
+	// 密钥模式已被转换时直接放弃，让转换结果生效。
+	const maxStatusPersistAttempts = 3
+	for attempt := 0; ; attempt++ {
+		channel, err := GetChannelById(channelId, true)
+		if err != nil {
+			return false
+		}
 		if channel.Status == status {
 			return false
 		}
-
+		// 旧多 key 世界的失败请求不得处置已转换的单 key 渠道：单 key 渠道合法的
+		// usingKey 恒等于 channel.Key，不等即为陈旧请求。
+		if usingKey != "" && !channel.ChannelInfo.IsMultiKey && usingKey != channel.Key {
+			return false
+		}
 		if channel.ChannelInfo.IsMultiKey {
 			beforeStatus := channel.Status
 			handlerMultiKeyUpdate(channel, usingKey, status, reason, cooldownUntil)
@@ -894,13 +996,19 @@ func updateChannelStatusWithCooldown(channelId int, usingKey string, status int,
 			channel.Status = status
 			shouldUpdateAbilities = true
 		}
-		err = channel.saveStatusState()
+		saved, err := channel.saveStatusState()
 		if err != nil {
 			common.SysLog(fmt.Sprintf("failed to update channel status: channel_id=%d, status=%d, error=%v", channel.Id, status, err))
 			return false
 		}
+		if saved {
+			return true
+		}
+		if attempt >= maxStatusPersistAttempts-1 {
+			common.SysError(fmt.Sprintf("channel status update exceeded optimistic-concurrency retries: channel_id=%d, status=%d", channelId, status))
+			return false
+		}
 	}
-	return true
 }
 
 func EnableChannelByTag(tag string) error {

@@ -227,7 +227,9 @@ func TestSaveStatusStateFromSingleKeySnapshotPreservesUnownedColumns(t *testing.
 		"status_reason": "manual operation",
 		"status_time":   int64(1234),
 	})
-	require.NoError(t, stale.saveStatusState())
+	saved, err := stale.saveStatusState()
+	require.NoError(t, err)
+	assert.True(t, saved)
 
 	var stored Channel
 	require.NoError(t, DB.First(&stored, channel.Id).Error)
@@ -235,7 +237,12 @@ func TestSaveStatusStateFromSingleKeySnapshotPreservesUnownedColumns(t *testing.
 	assert.Equal(t, "rotated-key", stored.Key)
 	assert.Equal(t, int64(350), stored.UsedQuota)
 	assert.Equal(t, "concurrent-model", stored.Models)
-	assert.Equal(t, concurrentChannelInfo, stored.ChannelInfo)
+	// 比较持久化的 JSON 内容；ChannelInfo 内部的加载基线不属于持久化状态
+	expectedInfo, err := common.Marshal(concurrentChannelInfo)
+	require.NoError(t, err)
+	storedInfo, err := common.Marshal(stored.ChannelInfo)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(expectedInfo), string(storedInfo))
 
 	otherInfo := stored.GetOtherInfo()
 	assert.Equal(t, "manual operation", otherInfo["status_reason"])

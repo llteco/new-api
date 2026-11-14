@@ -30,6 +30,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { createChannel, updateChannel } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
+  applyMultiKeyUpdateFields,
   transformFormDataToCreatePayload,
   transformFormDataToUpdatePayload,
   type ChannelFormValues,
@@ -38,8 +39,10 @@ import type { Channel } from '../types'
 
 type UseChannelMutateFormParams = {
   currentRow?: Channel | null
+  // 详情快照：转换检测的基线，优先于可能过期的表格行（其他管理员可能
+  // 在列表加载后转换过渠道）。表单同样用详情快照初始化。
+  detailChannel?: Channel | null
   isEditing: boolean
-  isMultiKeyChannel: boolean
   onSuccess: () => void
 }
 
@@ -104,21 +107,18 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
             delete payload[field]
           }
         }
-        const payloadWithKeyMode =
-          canEditSensitive &&
-          props.isMultiKeyChannel &&
-          data.key?.trim() &&
-          data.key_mode
-            ? {
-                ...payload,
-                key_mode: data.key_mode,
-              }
-            : payload
+        // 转换检测必须与表单初始化同源：详情快照缺失（加载失败）时表单停留在
+        // 默认值（is_multi_key=false），与任何基线的差异都是假象，不发多 key
+        // 字段，避免默认值触发删 key 的多→单转换。
+        const updatePayload = props.detailChannel
+          ? applyMultiKeyUpdateFields(payload, data, {
+              currentIsMultiKey:
+                props.detailChannel.channel_info.is_multi_key === true,
+              canEditSensitive,
+            })
+          : payload
 
-        const response = await updateChannel(
-          props.currentRow.id,
-          payloadWithKeyMode
-        )
+        const response = await updateChannel(props.currentRow.id, updatePayload)
         if (!response.success) {
           throw new Error(response.message || t(ERROR_MESSAGES.UPDATE_FAILED))
         }
