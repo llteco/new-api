@@ -217,6 +217,8 @@ func TaskErrorWrapper(err error, code string, statusCode int) *taskdto.TaskError
 }
 
 // TaskErrorFromAPIError 将 PreConsumeBilling 返回的 NewAPIError 转换为 TaskError。
+// 预扣费失败是用户/计费层面的本地错误（如额度不足），不是渠道故障，
+// 标记 LocalError 使其不参与跨渠道故障转移，也不触发渠道自动禁用。
 func TaskErrorFromAPIError(apiErr *types.NewAPIError) *taskdto.TaskError {
 	if apiErr == nil {
 		return nil
@@ -226,5 +228,6 @@ func TaskErrorFromAPIError(apiErr *types.NewAPIError) *taskdto.TaskError {
 		Message:    apiErr.Err.Error(),
 		StatusCode: apiErr.StatusCode,
 		Error:      apiErr.Err,
+		LocalError: true,
 	}
 }

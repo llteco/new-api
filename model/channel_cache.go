@@ -111,22 +111,47 @@ func SyncChannelCache(frequency int) {
 	}
 }
 
-func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+// GetRandomSatisfiedChannel picks a channel for group+model, skipping channels
+// already attempted in this request (excludeChannelIds). Among the remaining
+// candidates it always uses the highest priority tier, so failover exhausts
+// one tier before falling back to the next; selection within a tier is
+// weighted random. Returns nil when no candidate is left.
+func GetRandomSatisfiedChannel(group string, model string, excludeChannelIds []int, requestPath string) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, requestPath)
+		return GetChannel(group, model, excludeChannelIds, requestPath)
 	}
 
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
 	// First, try to find channels with the exact model name.
-	channels := filterChannelsByRequestPathAndModel(group2model2channels[group][model], requestPath, model)
+	excluded := make(map[int]bool, len(excludeChannelIds))
+	for _, channelId := range excludeChannelIds {
+		excluded[channelId] = true
+	}
+	remaining := func(candidates []int) []int {
+		if len(excluded) == 0 {
+			return candidates
+		}
+		kept := make([]int, 0, len(candidates))
+		for _, channelId := range candidates {
+			if !excluded[channelId] {
+				kept = append(kept, channelId)
+			}
+		}
+		return kept
+	}
 
-	// If no channels found, try to find channels with the normalized model name.
+	channels := remaining(filterChannelsByRequestPathAndModel(group2model2channels[group][model], requestPath, model))
+
+	// If no channels remain (none exist, or all were already attempted), try
+	// the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = filterChannelsByRequestPathAndModel(group2model2channels[group][normalizedModel], requestPath, model)
+		if normalizedModel != model {
+			channels = remaining(filterChannelsByRequestPathAndModel(group2model2channels[group][normalizedModel], requestPath, model))
+		}
 	}
 
 	if len(channels) == 0 {
@@ -140,41 +165,25 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 		return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channels[0])
 	}
 
-	uniquePriorities := make(map[int]bool)
-	for _, channelId := range channels {
-		if channel, ok := channelsIDM[channelId]; ok {
-			uniquePriorities[int(channel.GetPriority())] = true
-		} else {
+	var targetPriority int64
+	for i, channelId := range channels {
+		channel, ok := channelsIDM[channelId]
+		if !ok {
 			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
 		}
+		if i == 0 || channel.GetPriority() > targetPriority {
+			targetPriority = channel.GetPriority()
+		}
 	}
-	var sortedUniquePriorities []int
-	for priority := range uniquePriorities {
-		sortedUniquePriorities = append(sortedUniquePriorities, priority)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(sortedUniquePriorities)))
 
-	if retry >= len(uniquePriorities) {
-		retry = len(uniquePriorities) - 1
-	}
-	targetPriority := int64(sortedUniquePriorities[retry])
-
-	// get the priority for the given retry number
 	var sumWeight = 0
 	var targetChannels []*Channel
 	for _, channelId := range channels {
-		if channel, ok := channelsIDM[channelId]; ok {
-			if channel.GetPriority() == targetPriority {
-				sumWeight += channel.GetWeight()
-				targetChannels = append(targetChannels, channel)
-			}
-		} else {
-			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
+		channel := channelsIDM[channelId]
+		if channel.GetPriority() == targetPriority {
+			sumWeight += channel.GetWeight()
+			targetChannels = append(targetChannels, channel)
 		}
-	}
-
-	if len(targetChannels) == 0 {
-		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
 	}
 
 	// smoothing factor and adjustment

@@ -200,7 +200,7 @@ func Distribute() func(c *gin.Context) {
 		setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 		if setupErr != nil && channel != nil && setupErr.GetErrorCode() == types.ErrorCodeChannelNoAvailableKey && !ok && shouldSelectChannel {
 			// 渠道本身启用但暂时没有可用密钥（例如多 key 渠道的密钥全部被禁用或处于冷却期）时，
-			// 逐级降低优先级重选渠道，而不是携带空密钥把请求发给上游。
+			// 排除该渠道后重选（同优先级层内优先，试完才降层），而不是携带空密钥把请求发给上游。
 			// 令牌绑定了指定渠道（ok）时不降级，直接返回错误。
 			if next := selectChannelWithAvailableKey(c, channel.Id, modelRequest.Model); next != nil {
 				channel = next
@@ -228,34 +228,24 @@ func Distribute() func(c *gin.Context) {
 	}
 }
 
-// selectChannelWithAvailableKey 在原选中渠道因 channel:no_available_key 失败后，
-// 按与 relay 重试一致的语义（retry 序号 = 优先级层级）逐级降低优先级重选渠道，
-// 直到某个渠道真正取到可用密钥。同层内的选择是随机的，重选到已尝试的渠道时
-// 继续重试（同层可能还有未尝试的可用渠道），仅当连续尝试明显超过已见渠道数
-// 仍未出现新渠道时视为候选耗尽，返回 nil 由调用方返回错误。
+// selectChannelWithAvailableKey 在原选中渠道因 channel:no_available_key 失败后
+// 重选渠道，直到某个渠道真正取到可用密钥。选择时排除已尝试的渠道（同层内优先，
+// 高层级试完才降层），因此每次必返回新渠道，候选耗尽时返回 nil 由调用方返回错误。
 func selectChannelWithAvailableKey(c *gin.Context, failedChannelId int, modelName string) *model.Channel {
 	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-	tried := map[int]bool{failedChannelId: true}
-	attempts := 0
-	for retry := 1; ; retry++ {
-		attempts++
-		next, _, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-			Ctx:         c,
-			ModelName:   modelName,
-			TokenGroup:  usingGroup,
-			RequestPath: c.Request.URL.Path,
-			Retry:       common.GetPointer(retry),
-		})
+	param := &service.RetryParam{
+		Ctx:         c,
+		ModelName:   modelName,
+		TokenGroup:  usingGroup,
+		RequestPath: c.Request.URL.Path,
+	}
+	param.MarkTried(failedChannelId)
+	for {
+		next, _, err := service.CacheGetRandomSatisfiedChannel(param)
 		if err != nil || next == nil {
 			return nil
 		}
-		if tried[next.Id] {
-			if attempts > len(tried)*2+2 {
-				return nil
-			}
-			continue
-		}
-		tried[next.Id] = true
+		param.MarkTried(next.Id)
 		if SetupContextForSelectedChannel(c, next, modelName) == nil {
 			return next
 		}

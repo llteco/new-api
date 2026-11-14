@@ -312,7 +312,12 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 			idx := (start + i) % len(keys)
 			if channel.isKeySelectable(idx, now) {
 				// update polling index for next call (point to the next position)
-				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
+				next := (idx + 1) % len(keys)
+				channel.ChannelInfo.MultiKeyPollingIndex = next
+				// The receiver may be a detached DB snapshot (e.g. a task's
+				// LockedChannel); advance the shared cached index too so the
+				// next call rotates to the following key instead of repeating.
+				channelInfo.MultiKeyPollingIndex = next
 				return keys[idx], idx, nil
 			}
 		}

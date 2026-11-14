@@ -154,7 +154,7 @@ func TestSelectChannelWithAvailableKeyStopsWhenAllChannelsRepeat(t *testing.T) {
 
 // TestSelectChannelWithAvailableKeyTerminatesAcrossTiers drives the fallback
 // through multiple priority tiers whose channels all lack a usable key; it
-// must exhaust the random same-tier retries and return nil deterministically.
+// must exclude tried channels and return nil deterministically once exhausted.
 func TestSelectChannelWithAvailableKeyTerminatesAcrossTiers(t *testing.T) {
 	setupDistributorFallbackDB(t)
 
