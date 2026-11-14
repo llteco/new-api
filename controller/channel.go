@@ -595,7 +595,7 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 			keyStr = strings.TrimSpace(v)
 			// 字符串元素可能是美化格式的凭据 JSON，紧凑化以免换行拆分破坏凭据边界
 			if strings.HasPrefix(keyStr, "{") || strings.HasPrefix(keyStr, "[") {
-				keyStr, err = compactVertexCredential(keyStr)
+				keyStr, err = compactJSONCredential(keyStr)
 				if err != nil {
 					return nil, err
 				}
@@ -617,16 +617,16 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 	return cleanKeys, nil
 }
 
-// compactVertexCredential 将单条 JSON 凭据紧凑化，保证按换行拆分密钥时
-// 凭据边界不被破坏。
-func compactVertexCredential(credential string) (string, error) {
+// compactJSONCredential 将单条 JSON 凭据紧凑化，保证按换行拆分密钥时
+// 凭据边界不被破坏。Vertex 服务账号与 Codex OAuth 凭据共用。
+func compactJSONCredential(credential string) (string, error) {
 	var raw json.RawMessage
 	if err := common.Unmarshal([]byte(credential), &raw); err != nil {
-		return "", fmt.Errorf("Vertex AI 密钥必须是合法的 JSON: %w", err)
+		return "", fmt.Errorf("密钥必须是合法的 JSON: %w", err)
 	}
 	compact, err := common.Marshal(raw)
 	if err != nil {
-		return "", fmt.Errorf("Vertex AI key JSON 编码失败: %w", err)
+		return "", fmt.Errorf("密钥 JSON 编码失败: %w", err)
 	}
 	return string(compact), nil
 }
@@ -642,7 +642,7 @@ func parseVertexCredentialKeys(keys string) ([]string, error) {
 		return getVertexArrayKeys(trimmed)
 	}
 	// 整个输入是单个 JSON 值（美化格式也允许）
-	if credential, err := compactVertexCredential(trimmed); err == nil {
+	if credential, err := compactJSONCredential(trimmed); err == nil {
 		return []string{credential}, nil
 	}
 	// 换行分隔的紧凑凭据（多 key 存储格式）
@@ -652,7 +652,7 @@ func parseVertexCredentialKeys(keys string) ([]string, error) {
 		if line == "" {
 			continue
 		}
-		credential, err := compactVertexCredential(line)
+		credential, err := compactJSONCredential(line)
 		if err != nil {
 			return nil, err
 		}
@@ -1126,6 +1126,18 @@ func UpdateChannel(c *gin.Context) {
 						return
 					}
 					channel.Key = credentials[0]
+				} else if channelType == constant.ChannelTypeCodex {
+					// Codex 的 OAuth 凭据是单个 JSON 对象，美化格式（含换行）不能按
+					// 换行判多 key；校验并紧凑化后存储。
+					credential, err := compactJSONCredential(key)
+					if err != nil {
+						c.JSON(http.StatusOK, gin.H{
+							"success": false,
+							"message": err.Error(),
+						})
+						return
+					}
+					channel.Key = credential
 				} else {
 					if strings.ContainsAny(key, "\r\n") {
 						c.JSON(http.StatusOK, gin.H{

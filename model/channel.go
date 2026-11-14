@@ -283,7 +283,7 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		selectedIdx := enabledIdx[rand.Intn(len(enabledIdx))]
 		// random mode has no deferred save, so persist any cooldown cleanup
 		if cleanedUp {
-			_ = channel.SaveChannelInfo()
+			_, _ = channel.SaveChannelInfo()
 		}
 		return keys[selectedIdx], selectedIdx, nil
 	case constant.MultiKeyModePolling:
@@ -298,7 +298,7 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 				logger.LogDebug(nil, "channel %d polling index: %d", channel.Id, channel.ChannelInfo.MultiKeyPollingIndex)
 			}
 			if !common.MemoryCacheEnabled {
-				_ = channel.SaveChannelInfo()
+				_, _ = channel.SaveChannelInfo()
 			} else {
 				// CacheUpdateChannel(channel)
 			}
@@ -326,8 +326,9 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 
 // SaveChannelInfo 回写 channel_info，并带乐观并发校验：若自快照加载后该列已被
 // 其他写入方（如密钥模式转换）修改，则放弃回写，避免请求携带的过期多 key 元数据
-// 覆盖转换后的新状态。冷却清理/轮询索引丢失一次回写是安全的，下次请求会重做。
-func (channel *Channel) SaveChannelInfo() error {
+// 覆盖转换后的新状态。返回值报告本次是否落库，调用方可据此重载快照重放变更；
+// 冷却清理/轮询索引丢失一次回写是安全的，下次请求会重做。
+func (channel *Channel) SaveChannelInfo() (bool, error) {
 	query := DB.Model(channel)
 	if baseline := channel.ChannelInfo.baseline; baseline != "" {
 		switch {
@@ -335,20 +336,25 @@ func (channel *Channel) SaveChannelInfo() error {
 			// PostgreSQL 的 json 类型没有等值运算符，按文本比较
 			query = query.Where("channel_info::text = ?", baseline)
 		case common.UsingMainDatabase(common.DatabaseTypeMySQL):
-			// MySQL 原生 JSON 列按 JSON 语义比较
-			query = query.Where("channel_info = ?", baseline)
+			// MySQL 不会把字符串参数解析成 JSON 再与 JSON 列比较（json_col = ? 恒不
+			// 匹配，已实测），统一按文本比较；JSON 列 CAST 成 CHAR 即驱动读回的文本
+			query = query.Where("CAST(channel_info AS CHAR) = ?", baseline)
 		default:
 			// SQLite 以 BLOB 存储 JSON，需转成文本比较
 			query = query.Where("CAST(channel_info AS TEXT) = ?", baseline)
 		}
 	}
 	result := query.Update("channel_info", channel.ChannelInfo)
-	if result.Error == nil && result.RowsAffected > 0 {
-		if raw, err := common.Marshal(&channel.ChannelInfo); err == nil {
-			channel.ChannelInfo.baseline = string(raw)
-		}
+	if result.Error != nil {
+		return false, result.Error
 	}
-	return result.Error
+	if result.RowsAffected == 0 {
+		return false, nil
+	}
+	if raw, err := common.Marshal(&channel.ChannelInfo); err == nil {
+		channel.ChannelInfo.baseline = string(raw)
+	}
+	return true, nil
 }
 
 func (channel *Channel) GetModels() []string {
@@ -417,23 +423,23 @@ func (channel *Channel) Save() error {
 // status/other_info must persist unconditionally, while channel_info goes
 // through SaveChannelInfo's optimistic-concurrency check so a stale multi-key
 // snapshot cannot overwrite metadata rewritten by a concurrent key-mode
-// conversion. A skipped channel_info write only loses one per-key status
-// record; the next failure re-records it.
-func (channel *Channel) saveStatusState() error {
+// conversion. The returned bool reports whether channel_info committed;
+// callers may reload the row and replay their change on conflict.
+func (channel *Channel) saveStatusState() (bool, error) {
 	if channel.Id == 0 {
-		return errors.New("channel ID is 0")
+		return false, errors.New("channel ID is 0")
 	}
 	updates := map[string]any{
 		"status":     channel.Status,
 		"other_info": channel.OtherInfo,
 	}
 	if err := DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
-		return err
+		return false, err
 	}
-	if channel.ChannelInfo.IsMultiKey {
-		return channel.SaveChannelInfo()
+	if !channel.ChannelInfo.IsMultiKey {
+		return true, nil
 	}
-	return nil
+	return channel.SaveChannelInfo()
 }
 
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
@@ -927,14 +933,21 @@ func updateChannelStatusWithCooldown(channelId int, usingKey string, status int,
 			}
 		}
 	}()
-	channel, err := GetChannelById(channelId, true)
-	if err != nil {
-		return false
-	} else {
+	// 多 key 渠道的 channel_info 带乐观并发校验；被并发写入（如其他实例推进轮询
+	// 游标）挤掉时，重载快照重放本次变更，避免 per-key 禁用状态反复丢失。重放中
+	// 发现密钥模式已被转换（单 key 化）时直接放弃，让转换结果生效。
+	const maxStatusPersistAttempts = 3
+	for attempt := 0; ; attempt++ {
+		channel, err := GetChannelById(channelId, true)
+		if err != nil {
+			return false
+		}
 		if channel.Status == status {
 			return false
 		}
-
+		if attempt > 0 && usingKey != "" && !channel.ChannelInfo.IsMultiKey {
+			return false
+		}
 		if channel.ChannelInfo.IsMultiKey {
 			beforeStatus := channel.Status
 			handlerMultiKeyUpdate(channel, usingKey, status, reason, cooldownUntil)
@@ -949,13 +962,15 @@ func updateChannelStatusWithCooldown(channelId int, usingKey string, status int,
 			channel.Status = status
 			shouldUpdateAbilities = true
 		}
-		err = channel.saveStatusState()
+		saved, err := channel.saveStatusState()
 		if err != nil {
 			common.SysLog(fmt.Sprintf("failed to update channel status: channel_id=%d, status=%d, error=%v", channel.Id, status, err))
 			return false
 		}
+		if saved || attempt >= maxStatusPersistAttempts-1 {
+			return true
+		}
 	}
-	return true
 }
 
 func EnableChannelByTag(tag string) error {

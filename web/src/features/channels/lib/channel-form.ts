@@ -923,6 +923,11 @@ export function applyMultiKeyUpdateFields(
   options: { currentIsMultiKey: boolean; canEditSensitive: boolean }
 ): ChannelUpdatePayload {
   if (!options.canEditSensitive) {
+    // 策略变更后端归类为非敏感字段：无敏感权限时仍发送策略，仅拦转换与密钥
+    // 更新字段，避免抽屉里改了策略却显示保存成功而实际被静默丢弃。
+    if (options.currentIsMultiKey && formData.multi_key_type) {
+      return { ...payload, multi_key_mode: formData.multi_key_type }
+    }
     return payload
   }
 

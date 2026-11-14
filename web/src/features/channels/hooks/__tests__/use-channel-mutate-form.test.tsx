@@ -25,6 +25,8 @@ import { CHANNEL_FORM_DEFAULT_VALUES } from '../../lib/channel-form'
 import type { Channel } from '../../types'
 import { useChannelMutateForm } from '../use-channel-mutate-form'
 
+const permissions = vi.hoisted(() => ({ sensitiveWrite: true }))
+
 vi.mock('../../api', () => ({
   updateChannel: vi.fn(),
   createChannel: vi.fn(),
@@ -36,7 +38,7 @@ vi.mock('@/stores/auth-store', () => ({
 vi.mock('@/lib/admin-permissions', () => ({
   ADMIN_PERMISSION_ACTIONS: { SENSITIVE_WRITE: 'sensitive_write' },
   ADMIN_PERMISSION_RESOURCES: { CHANNEL: 'channel' },
-  hasPermission: () => true,
+  hasPermission: () => permissions.sensitiveWrite,
 }))
 
 const { updateChannel } = await import('../../api')
@@ -64,6 +66,7 @@ function createWrapper() {
 }
 
 beforeEach(() => {
+  permissions.sensitiveWrite = true
   vi.mocked(updateChannel).mockResolvedValue({ success: true, message: '' })
 })
 
@@ -106,5 +109,36 @@ describe('useChannelMutateForm key-mode conversion baseline', () => {
       7,
       expect.objectContaining({ is_multi_key: false })
     )
+  })
+
+  test('sends strategy but not conversion fields without sensitive permission', async () => {
+    permissions.sensitiveWrite = false
+    const { result } = renderHook(
+      () =>
+        useChannelMutateForm({
+          currentRow: channelFixture(true),
+          isEditing: true,
+          onSuccess: () => {},
+        }),
+      { wrapper: createWrapper() }
+    )
+
+    // 策略是后端认定的非敏感字段：改策略必须真正提交，而不是静默丢弃
+    await result.current.mutateAsync({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      is_multi_key: true,
+      multi_key_type: 'polling',
+    })
+
+    expect(updateChannel).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ multi_key_mode: 'polling' })
+    )
+    const payload = vi.mocked(updateChannel).mock.calls[0][1] as Record<
+      string,
+      unknown
+    >
+    expect(payload.is_multi_key).toBeUndefined()
+    expect(payload.key_mode).toBeUndefined()
   })
 })

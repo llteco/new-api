@@ -484,6 +484,37 @@ func TestUpdateChannelCodexKeyModeConversion(t *testing.T) {
 		assert.False(t, stored.ChannelInfo.IsMultiKey)
 		assert.Equal(t, `{"access_token":"tok-a","account_id":"acc"}`, stored.Key)
 	})
+
+	t.Run("accepts a pretty-printed OAuth credential when converting to single key", func(t *testing.T) {
+		channel := &model.Channel{
+			Type:   constant.ChannelTypeCodex,
+			Key:    "{\"access_token\":\"tok-a\",\"account_id\":\"acc\"}\n{\"access_token\":\"tok-b\",\"account_id\":\"acc\"}",
+			Name:   "codex-pretty-to-single",
+			Models: "gpt-5-codex",
+			Group:  "default",
+			Status: common.ChannelStatusEnabled,
+			ChannelInfo: model.ChannelInfo{
+				IsMultiKey:   true,
+				MultiKeySize: 2,
+				MultiKeyMode: constant.MultiKeyModeRandom,
+			},
+		}
+		insertChannelForUpdateTest(t, channel)
+
+		// Codex 的 OAuth 凭据是单个 JSON 对象，美化格式（含换行）不是多 key
+		prettyCredential := "{\n  \"access_token\": \"tok-new\",\n  \"account_id\": \"acc\"\n}"
+		keyJSON, err := common.Marshal(prettyCredential)
+		require.NoError(t, err)
+		result := performUpdateChannelRequest(t, common.RoleRootUser, fmt.Sprintf(
+			`{"id":%d,"is_multi_key":false,"key":%s}`,
+			channel.Id, keyJSON,
+		))
+
+		require.True(t, result.success, result.message)
+		stored := reloadChannelForUpdateTest(t, channel.Id)
+		assert.False(t, stored.ChannelInfo.IsMultiKey)
+		assert.Equal(t, `{"access_token":"tok-new","account_id":"acc"}`, stored.Key)
+	})
 }
 
 func TestAddChannelRejectsCodexMultiKeyMode(t *testing.T) {
