@@ -362,6 +362,29 @@ func TestUpdateChannelConvertsVertexSingleKeyToMultiKey(t *testing.T) {
 		assertVertexCredentialProject(t, keys[0], "proj-a")
 		assertVertexCredentialProject(t, keys[1], "proj-b")
 	})
+
+	t.Run("compacts pretty-printed string elements in a credential array", func(t *testing.T) {
+		channel := insertVertexChannelForUpdateTest(t, "vertex-array-string-element", `{"type":"service_account","project_id":"proj-old"}`, model.ChannelInfo{})
+
+		// 数组元素是"包含美化 JSON 的字符串"，同样不能把换行带进多 key 存储
+		arrayKey, err := common.Marshal([]string{prettyVertexCredential})
+		require.NoError(t, err)
+		keyJSON, err := common.Marshal(string(arrayKey))
+		require.NoError(t, err)
+		result := performUpdateChannelRequest(t, common.RoleRootUser, fmt.Sprintf(
+			`{"id":%d,"is_multi_key":true,"other":"{\"default\":\"us-central1\"}","key":%s}`,
+			channel.Id, keyJSON,
+		))
+
+		require.True(t, result.success, result.message)
+		stored := reloadChannelForUpdateTest(t, channel.Id)
+		assert.True(t, stored.ChannelInfo.IsMultiKey)
+		assert.Equal(t, 1, stored.ChannelInfo.MultiKeySize)
+		keys := stored.GetKeys()
+		require.Len(t, keys, 1)
+		assert.NotContains(t, keys[0], "\n")
+		assertVertexCredentialProject(t, keys[0], "proj-a")
+	})
 }
 
 func TestUpdateChannelVertexMultiToSingleRequiresOneCredential(t *testing.T) {
@@ -407,4 +430,83 @@ func TestUpdateChannelVertexMultiToSingleRequiresOneCredential(t *testing.T) {
 		assert.NotContains(t, stored.Key, "\n")
 		assertVertexCredentialProject(t, stored.Key, "proj-a")
 	})
+}
+
+func TestUpdateChannelCodexKeyModeConversion(t *testing.T) {
+	setupModelListControllerTestDB(t)
+
+	t.Run("rejects converting a Codex channel to multi-key", func(t *testing.T) {
+		channel := &model.Channel{
+			Type:   constant.ChannelTypeCodex,
+			Key:    `{"access_token":"tok","account_id":"acc"}`,
+			Name:   "codex-to-multi",
+			Models: "gpt-5-codex",
+			Group:  "default",
+			Status: common.ChannelStatusEnabled,
+		}
+		insertChannelForUpdateTest(t, channel)
+
+		result := performUpdateChannelRequest(t, common.RoleRootUser, fmt.Sprintf(
+			`{"id":%d,"is_multi_key":true}`,
+			channel.Id,
+		))
+
+		require.False(t, result.success)
+		assert.Contains(t, result.message, "Codex")
+		stored := reloadChannelForUpdateTest(t, channel.Id)
+		assert.False(t, stored.ChannelInfo.IsMultiKey)
+		assert.Equal(t, `{"access_token":"tok","account_id":"acc"}`, stored.Key)
+	})
+
+	t.Run("allows converting an existing multi-key Codex channel back to single", func(t *testing.T) {
+		channel := &model.Channel{
+			Type:   constant.ChannelTypeCodex,
+			Key:    "{\"access_token\":\"tok-a\",\"account_id\":\"acc\"}\n{\"access_token\":\"tok-b\",\"account_id\":\"acc\"}",
+			Name:   "codex-to-single",
+			Models: "gpt-5-codex",
+			Group:  "default",
+			Status: common.ChannelStatusEnabled,
+			ChannelInfo: model.ChannelInfo{
+				IsMultiKey:   true,
+				MultiKeySize: 2,
+				MultiKeyMode: constant.MultiKeyModeRandom,
+			},
+		}
+		insertChannelForUpdateTest(t, channel)
+
+		result := performUpdateChannelRequest(t, common.RoleRootUser, fmt.Sprintf(
+			`{"id":%d,"is_multi_key":false}`,
+			channel.Id,
+		))
+
+		require.True(t, result.success, result.message)
+		stored := reloadChannelForUpdateTest(t, channel.Id)
+		assert.False(t, stored.ChannelInfo.IsMultiKey)
+		assert.Equal(t, `{"access_token":"tok-a","account_id":"acc"}`, stored.Key)
+	})
+}
+
+func TestAddChannelRejectsCodexMultiKeyMode(t *testing.T) {
+	setupModelListControllerTestDB(t)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/", bytes.NewBufferString(fmt.Sprintf(
+		`{"mode":"multi_to_single","multi_key_mode":"random","channel":{"type":%d,"name":"codex-multi","key":"{\"access_token\":\"tok\",\"account_id\":\"acc\"}","models":"gpt-5-codex","group":"default"}}`,
+		constant.ChannelTypeCodex,
+	)))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("role", common.RoleRootUser)
+	ctx.Set("id", 1)
+
+	AddChannel(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.False(t, response.Success)
+	assert.Contains(t, response.Message, "Codex")
 }

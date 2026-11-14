@@ -39,6 +39,9 @@ import type { Channel } from '../types'
 
 type UseChannelMutateFormParams = {
   currentRow?: Channel | null
+  // 详情快照：转换检测的基线，优先于可能过期的表格行（其他管理员可能
+  // 在列表加载后转换过渠道）。表单同样用详情快照初始化。
+  detailChannel?: Channel | null
   isEditing: boolean
   onSuccess: () => void
 }
@@ -92,6 +95,7 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
   return useMutation({
     mutationFn: async (data: ChannelFormValues): Promise<string> => {
       if (props.isEditing && props.currentRow) {
+        const baselineChannel = props.detailChannel ?? props.currentRow
         const payload = transformFormDataToUpdatePayload(
           data,
           props.currentRow.id
@@ -106,7 +110,7 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
         }
         const updatePayload = applyMultiKeyUpdateFields(payload, data, {
           currentIsMultiKey:
-            props.currentRow.channel_info.is_multi_key === true,
+            baselineChannel.channel_info.is_multi_key === true,
           canEditSensitive,
         })
 

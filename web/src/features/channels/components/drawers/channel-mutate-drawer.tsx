@@ -1625,6 +1625,7 @@ export function ChannelMutateDrawer({
 
   const channelMutation = useChannelMutateForm({
     currentRow,
+    detailChannel: channelData?.data,
     isEditing,
     onSuccess: handleSuccess,
   })

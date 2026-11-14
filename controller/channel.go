@@ -593,6 +593,13 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 		switch v := key.(type) {
 		case string:
 			keyStr = strings.TrimSpace(v)
+			// 字符串元素可能是美化格式的凭据 JSON，紧凑化以免换行拆分破坏凭据边界
+			if strings.HasPrefix(keyStr, "{") || strings.HasPrefix(keyStr, "[") {
+				keyStr, err = compactVertexCredential(keyStr)
+				if err != nil {
+					return nil, err
+				}
+			}
 		default:
 			bytes, err := common.Marshal(v)
 			if err != nil {
@@ -610,9 +617,22 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 	return cleanKeys, nil
 }
 
+// compactVertexCredential 将单条 JSON 凭据紧凑化，保证按换行拆分密钥时
+// 凭据边界不被破坏。
+func compactVertexCredential(credential string) (string, error) {
+	var raw json.RawMessage
+	if err := common.Unmarshal([]byte(credential), &raw); err != nil {
+		return "", fmt.Errorf("Vertex AI 密钥必须是合法的 JSON: %w", err)
+	}
+	compact, err := common.Marshal(raw)
+	if err != nil {
+		return "", fmt.Errorf("Vertex AI key JSON 编码失败: %w", err)
+	}
+	return string(compact), nil
+}
+
 // parseVertexCredentialKeys 将 Vertex AI 服务账号密钥解析为逐条紧凑 JSON 凭据。
 // 输入可以是 JSON 数组、单个（可能美化的）JSON 对象，或换行分隔的紧凑 JSON 对象。
-// 紧凑化保证存储后按换行拆分密钥（GetKeys）时不会破坏凭据边界。
 func parseVertexCredentialKeys(keys string) ([]string, error) {
 	trimmed := strings.TrimSpace(keys)
 	if trimmed == "" {
@@ -621,20 +641,8 @@ func parseVertexCredentialKeys(keys string) ([]string, error) {
 	if strings.HasPrefix(trimmed, "[") {
 		return getVertexArrayKeys(trimmed)
 	}
-	compactCredential := func(raw json.RawMessage) (string, error) {
-		compact, err := common.Marshal(raw)
-		if err != nil {
-			return "", fmt.Errorf("Vertex AI key JSON 编码失败: %w", err)
-		}
-		return string(compact), nil
-	}
 	// 整个输入是单个 JSON 值（美化格式也允许）
-	var raw json.RawMessage
-	if err := common.Unmarshal([]byte(trimmed), &raw); err == nil {
-		credential, err := compactCredential(raw)
-		if err != nil {
-			return nil, err
-		}
+	if credential, err := compactVertexCredential(trimmed); err == nil {
 		return []string{credential}, nil
 	}
 	// 换行分隔的紧凑凭据（多 key 存储格式）
@@ -644,11 +652,7 @@ func parseVertexCredentialKeys(keys string) ([]string, error) {
 		if line == "" {
 			continue
 		}
-		var item json.RawMessage
-		if err := common.Unmarshal([]byte(line), &item); err != nil {
-			return nil, fmt.Errorf("Vertex AI 密钥必须是 JSON 对象或标准的 JsonArray 格式: %w", err)
-		}
-		credential, err := compactCredential(item)
+		credential, err := compactVertexCredential(line)
 		if err != nil {
 			return nil, err
 		}
@@ -678,6 +682,14 @@ func AddChannel(c *gin.Context) {
 	keys := make([]string, 0)
 	switch addChannelRequest.Mode {
 	case "multi_to_single":
+		// Codex 的 OAuth JSON 凭据是一条逻辑凭据，与前端抽屉的限制保持一致
+		if addChannelRequest.Channel.Type == constant.ChannelTypeCodex {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "Codex 渠道不支持多密钥模式",
+			})
+			return
+		}
 		addChannelRequest.Channel.ChannelInfo.IsMultiKey = true
 		addChannelRequest.Channel.ChannelInfo.MultiKeyMode = addChannelRequest.MultiKeyMode
 		if addChannelRequest.MultiKeyLimitPatterns != nil {
@@ -1065,6 +1077,14 @@ func UpdateChannel(c *gin.Context) {
 	convertedToSingleKey := false
 	if channel.IsMultiKey != nil && *channel.IsMultiKey != originChannel.ChannelInfo.IsMultiKey {
 		if *channel.IsMultiKey {
+			// Codex 的 OAuth JSON 凭据是一条逻辑凭据，与前端抽屉的限制保持一致
+			if channelType == constant.ChannelTypeCodex {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "Codex 渠道不支持多密钥模式",
+				})
+				return
+			}
 			// 单 key -> 多 key：重建状态，避免继承旧渠道上残留的 per-key 数据。
 			channel.ChannelInfo = model.ChannelInfo{
 				IsMultiKey:   true,

@@ -80,6 +80,10 @@ type ChannelInfo struct {
 	MultiKeyLimitPatterns  []LimitPattern        `json:"multi_key_limit_patterns,omitempty"`  // 多Key限流匹配模式列表
 	MultiKeyPollingIndex   int                   `json:"multi_key_polling_index"`             // 多Key模式下轮询的key索引
 	MultiKeyMode           constant.MultiKeyMode `json:"multi_key_mode"`
+
+	// baseline 记录最近一次从数据库加载时的原始 JSON，供 SaveChannelInfo 做
+	// 乐观并发校验；不参与序列化。
+	baseline string
 }
 
 type ChannelSortOptions struct {
@@ -184,6 +188,7 @@ func (c ChannelInfo) Value() (driver.Value, error) {
 // Scan implements sql.Scanner interface
 func (c *ChannelInfo) Scan(value interface{}) error {
 	bytesValue, _ := value.([]byte)
+	c.baseline = string(bytesValue)
 	return common.Unmarshal(bytesValue, c)
 }
 
@@ -319,8 +324,31 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	}
 }
 
+// SaveChannelInfo 回写 channel_info，并带乐观并发校验：若自快照加载后该列已被
+// 其他写入方（如密钥模式转换）修改，则放弃回写，避免请求携带的过期多 key 元数据
+// 覆盖转换后的新状态。冷却清理/轮询索引丢失一次回写是安全的，下次请求会重做。
 func (channel *Channel) SaveChannelInfo() error {
-	return DB.Model(channel).Update("channel_info", channel.ChannelInfo).Error
+	query := DB.Model(channel)
+	if baseline := channel.ChannelInfo.baseline; baseline != "" {
+		switch {
+		case common.UsingMainDatabase(common.DatabaseTypePostgreSQL):
+			// PostgreSQL 的 json 类型没有等值运算符，按文本比较
+			query = query.Where("channel_info::text = ?", baseline)
+		case common.UsingMainDatabase(common.DatabaseTypeMySQL):
+			// MySQL 原生 JSON 列按 JSON 语义比较
+			query = query.Where("channel_info = ?", baseline)
+		default:
+			// SQLite 以 BLOB 存储 JSON，需转成文本比较
+			query = query.Where("CAST(channel_info AS TEXT) = ?", baseline)
+		}
+	}
+	result := query.Update("channel_info", channel.ChannelInfo)
+	if result.Error == nil && result.RowsAffected > 0 {
+		if raw, err := common.Marshal(&channel.ChannelInfo); err == nil {
+			channel.ChannelInfo.baseline = string(raw)
+		}
+	}
+	return result.Error
 }
 
 func (channel *Channel) GetModels() []string {
@@ -386,6 +414,11 @@ func (channel *Channel) Save() error {
 // saveStatusState persists only the fields owned by the channel status flow.
 // Keeping this allowlist here prevents a stale channel snapshot from
 // overwriting credentials, accounting counters, or channel configuration.
+// status/other_info must persist unconditionally, while channel_info goes
+// through SaveChannelInfo's optimistic-concurrency check so a stale multi-key
+// snapshot cannot overwrite metadata rewritten by a concurrent key-mode
+// conversion. A skipped channel_info write only loses one per-key status
+// record; the next failure re-records it.
 func (channel *Channel) saveStatusState() error {
 	if channel.Id == 0 {
 		return errors.New("channel ID is 0")
@@ -394,10 +427,13 @@ func (channel *Channel) saveStatusState() error {
 		"status":     channel.Status,
 		"other_info": channel.OtherInfo,
 	}
-	if channel.ChannelInfo.IsMultiKey {
-		updates["channel_info"] = channel.ChannelInfo
+	if err := DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
+		return err
 	}
-	return DB.Model(&Channel{}).Where("id = ?", channel.Id).Updates(updates).Error
+	if channel.ChannelInfo.IsMultiKey {
+		return channel.SaveChannelInfo()
+	}
+	return nil
 }
 
 func GetAllChannels(startIdx int, num int, selectAll bool, idSort bool, sortOptions ...ChannelSortOptions) ([]*Channel, error) {
