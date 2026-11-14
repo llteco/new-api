@@ -92,10 +92,12 @@ describe('useChannelMutateForm key-mode conversion baseline', () => {
     )
   })
 
-  test('falls back to the table row when no detail snapshot is loaded', async () => {
+  test('omits multi-key fields when no detail snapshot is loaded', async () => {
     const { result } = renderHook(
       () =>
         useChannelMutateForm({
+          // 详情加载失败：表单停留在默认值（is_multi_key=false），与表格行的差异
+          // 是假象，不得发送转换/策略字段
           currentRow: channelFixture(true),
           isEditing: true,
           onSuccess: () => {},
@@ -105,10 +107,14 @@ describe('useChannelMutateForm key-mode conversion baseline', () => {
 
     await result.current.mutateAsync(formValues(false))
 
-    expect(updateChannel).toHaveBeenCalledWith(
-      7,
-      expect.objectContaining({ is_multi_key: false })
-    )
+    expect(updateChannel).toHaveBeenCalledTimes(1)
+    const payload = vi.mocked(updateChannel).mock.calls[0][1] as Record<
+      string,
+      unknown
+    >
+    expect(payload.is_multi_key).toBeUndefined()
+    expect(payload.multi_key_mode).toBeUndefined()
+    expect(payload.key_mode).toBeUndefined()
   })
 
   test('sends strategy but not conversion fields without sensitive permission', async () => {
@@ -117,6 +123,7 @@ describe('useChannelMutateForm key-mode conversion baseline', () => {
       () =>
         useChannelMutateForm({
           currentRow: channelFixture(true),
+          detailChannel: channelFixture(true),
           isEditing: true,
           onSuccess: () => {},
         }),

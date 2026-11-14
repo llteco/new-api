@@ -95,7 +95,6 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
   return useMutation({
     mutationFn: async (data: ChannelFormValues): Promise<string> => {
       if (props.isEditing && props.currentRow) {
-        const baselineChannel = props.detailChannel ?? props.currentRow
         const payload = transformFormDataToUpdatePayload(
           data,
           props.currentRow.id
@@ -108,11 +107,16 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
             delete payload[field]
           }
         }
-        const updatePayload = applyMultiKeyUpdateFields(payload, data, {
-          currentIsMultiKey:
-            baselineChannel.channel_info.is_multi_key === true,
-          canEditSensitive,
-        })
+        // 转换检测必须与表单初始化同源：详情快照缺失（加载失败）时表单停留在
+        // 默认值（is_multi_key=false），与任何基线的差异都是假象，不发多 key
+        // 字段，避免默认值触发删 key 的多→单转换。
+        const updatePayload = props.detailChannel
+          ? applyMultiKeyUpdateFields(payload, data, {
+              currentIsMultiKey:
+                props.detailChannel.channel_info.is_multi_key === true,
+              canEditSensitive,
+            })
+          : payload
 
         const response = await updateChannel(props.currentRow.id, updatePayload)
         if (!response.success) {

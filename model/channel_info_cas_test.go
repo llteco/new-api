@@ -73,17 +73,20 @@ func TestSaveChannelInfoRejectsStaleSnapshotAfterConversion(t *testing.T) {
 	assert.Zero(t, stored.ChannelInfo.MultiKeyPollingIndex)
 }
 
-// 密钥模式转换提交后，失败请求的状态回写不得把旧的多 key 元数据写回：
-// 状态本身必须落库，channel_info 走 CAS 放弃过期快照。
-func TestSaveStatusStateKeepsConvertedChannelInfoWhilePersistingStatus(t *testing.T) {
+// 密钥模式转换提交后，过期快照的状态回写必须整体放弃：status/other_info 与
+// channel_info 同生共死，旧快照的 AutoDisabled（全部 key 禁用翻转）不得落到
+// 已转换的单 key 渠道上。
+func TestSaveStatusStateSkipsStaleSnapshotEntirelyAfterConversion(t *testing.T) {
 	setupChannelInfoCASTest(t)
 	channel := insertChannelInfoCASTestChannel(t)
 
-	// 进行中的失败请求持有的快照（加载后、回写前）
+	// 进行中的失败请求持有的快照：key-b 已被禁用，最后一个可用 key 失败 →
+	// 全部禁用 → 渠道翻转 AutoDisabled
 	stale, err := GetChannelById(channel.Id, true)
 	require.NoError(t, err)
-	stale.Status = common.ChannelStatusManuallyDisabled
-	stale.ChannelInfo.MultiKeyStatusList = map[int]int{1: common.ChannelStatusTempDisabled}
+	stale.ChannelInfo.MultiKeyStatusList = map[int]int{1: common.ChannelStatusManuallyDisabled}
+	handlerMultiKeyUpdate(stale, "key-a", common.ChannelStatusAutoDisabled, "provider rejected", nil)
+	require.Equal(t, common.ChannelStatusAutoDisabled, stale.Status)
 
 	// 另一个写入方把渠道转换为单 key
 	converted, err := GetChannelById(channel.Id, true)
@@ -98,7 +101,7 @@ func TestSaveStatusStateKeepsConvertedChannelInfoWhilePersistingStatus(t *testin
 
 	stored, err := GetChannelById(channel.Id, true)
 	require.NoError(t, err)
-	assert.Equal(t, common.ChannelStatusManuallyDisabled, stored.Status)
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
 	assert.Equal(t, "key-b", stored.Key)
 	assert.False(t, stored.ChannelInfo.IsMultiKey)
 	assert.Empty(t, stored.ChannelInfo.MultiKeyStatusList)
@@ -227,7 +230,29 @@ func TestUpdateChannelStatusGivesUpWhenConvertedToSingleKey(t *testing.T) {
 
 	stored, err := GetChannelById(channel.Id, true)
 	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
 	assert.Equal(t, "key-b", stored.Key)
 	assert.False(t, stored.ChannelInfo.IsMultiKey)
 	assert.Empty(t, stored.ChannelInfo.MultiKeyStatusList)
+}
+
+// 转换在失败请求加载之前已提交：旧多 key 世界的 usingKey 不得把已转换的单 key
+// 渠道整体禁用（单 key 渠道合法的 usingKey 恒等于 channel.Key）。
+func TestUpdateChannelStatusSkipsStaleUsingKeyAfterConversion(t *testing.T) {
+	setupChannelInfoCASTest(t)
+	channel := insertChannelInfoCASTestChannel(t)
+
+	converted, err := GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	converted.Key = "key-b"
+	converted.ChannelInfo = ChannelInfo{}
+	require.NoError(t, converted.UpdateWithChannelInfo())
+
+	changed := UpdateChannelStatus(channel.Id, "key-a", common.ChannelStatusAutoDisabled, "provider rejected key")
+	require.False(t, changed)
+
+	stored, err := GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
+	assert.Equal(t, "key-b", stored.Key)
 }
