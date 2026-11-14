@@ -184,6 +184,9 @@ func TestUpdateChannelMultiKeyToSingleRequiresAvailableKey(t *testing.T) {
 				0: common.ChannelStatusManuallyDisabled,
 				1: common.ChannelStatusTempDisabled,
 			},
+			MultiKeyCooldownUntil: map[int]int64{
+				1: common.GetTimestamp() + 3600,
+			},
 			MultiKeyMode: constant.MultiKeyModeRandom,
 		},
 	}
@@ -198,6 +201,44 @@ func TestUpdateChannelMultiKeyToSingleRequiresAvailableKey(t *testing.T) {
 	assert.Contains(t, result.message, "没有可用的密钥")
 	stored := reloadChannelForUpdateTest(t, channel.Id)
 	assert.True(t, stored.ChannelInfo.IsMultiKey)
+}
+
+func TestUpdateChannelMultiKeyToSingleAcceptsExpiredCooldownKey(t *testing.T) {
+	setupModelListControllerTestDB(t)
+
+	channel := &model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-a\nsk-b",
+		Name:   "multi-to-single-expired-cooldown",
+		Models: "gpt-4o",
+		Group:  "default",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyStatusList: map[int]int{
+				0: common.ChannelStatusManuallyDisabled,
+				1: common.ChannelStatusTempDisabled,
+			},
+			MultiKeyCooldownUntil: map[int]int64{
+				1: common.GetTimestamp() - 10,
+			},
+			MultiKeyMode: constant.MultiKeyModeRandom,
+		},
+	}
+	insertChannelForUpdateTest(t, channel)
+
+	result := performUpdateChannelRequest(t, common.RoleRootUser, fmt.Sprintf(
+		`{"id":%d,"is_multi_key":false}`,
+		channel.Id,
+	))
+
+	require.True(t, result.success, result.message)
+	stored := reloadChannelForUpdateTest(t, channel.Id)
+	assert.Equal(t, "sk-b", stored.Key)
+	assert.False(t, stored.ChannelInfo.IsMultiKey)
+	assert.Zero(t, stored.ChannelInfo.MultiKeySize)
+	assert.Nil(t, stored.ChannelInfo.MultiKeyStatusList)
 }
 
 func TestUpdateChannelRejectsUnknownMultiKeyMode(t *testing.T) {
@@ -245,4 +286,125 @@ func TestUpdateChannelMultiKeyConversionRequiresSensitiveWrite(t *testing.T) {
 	require.False(t, result.success)
 	stored := reloadChannelForUpdateTest(t, channel.Id)
 	assert.False(t, stored.ChannelInfo.IsMultiKey)
+}
+
+// prettyVertexCredential 是美化格式的服务账号凭据：含换行，但只是一条逻辑凭据。
+const prettyVertexCredential = `{
+  "type": "service_account",
+  "project_id": "proj-a",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n"
+}`
+
+func insertVertexChannelForUpdateTest(t *testing.T, name, key string, info model.ChannelInfo) *model.Channel {
+	t.Helper()
+
+	channel := &model.Channel{
+		Type:          constant.ChannelTypeVertexAi,
+		Key:           key,
+		Name:          name,
+		Models:        "gemini-2.0-flash",
+		Group:         "default",
+		Status:        common.ChannelStatusEnabled,
+		Other:         `{"default":"us-central1"}`,
+		OtherSettings: `{"vertex_key_type":"json"}`,
+		ChannelInfo:   info,
+	}
+	insertChannelForUpdateTest(t, channel)
+	return channel
+}
+
+func assertVertexCredentialProject(t *testing.T, key, project string) {
+	t.Helper()
+
+	var credential map[string]any
+	require.NoError(t, common.Unmarshal([]byte(key), &credential))
+	assert.Equal(t, project, credential["project_id"])
+}
+
+func TestUpdateChannelConvertsVertexSingleKeyToMultiKey(t *testing.T) {
+	setupModelListControllerTestDB(t)
+
+	t.Run("compacts pretty-printed credential when no key is provided", func(t *testing.T) {
+		channel := insertVertexChannelForUpdateTest(t, "vertex-single-to-multi", prettyVertexCredential, model.ChannelInfo{})
+
+		result := performUpdateChannelRequest(t, common.RoleRootUser, fmt.Sprintf(
+			`{"id":%d,"is_multi_key":true,"other":"{\"default\":\"us-central1\"}"}`,
+			channel.Id,
+		))
+
+		require.True(t, result.success, result.message)
+		stored := reloadChannelForUpdateTest(t, channel.Id)
+		assert.True(t, stored.ChannelInfo.IsMultiKey)
+		assert.Equal(t, 1, stored.ChannelInfo.MultiKeySize)
+		keys := stored.GetKeys()
+		require.Len(t, keys, 1)
+		assert.NotContains(t, keys[0], "\n")
+		assertVertexCredentialProject(t, keys[0], "proj-a")
+	})
+
+	t.Run("appends new credential without splitting the pretty-printed one", func(t *testing.T) {
+		channel := insertVertexChannelForUpdateTest(t, "vertex-single-to-multi-append", prettyVertexCredential, model.ChannelInfo{})
+
+		newCredential := `{"type":"service_account","project_id":"proj-b"}`
+		keyJSON, err := common.Marshal(newCredential)
+		require.NoError(t, err)
+		result := performUpdateChannelRequest(t, common.RoleRootUser, fmt.Sprintf(
+			`{"id":%d,"is_multi_key":true,"key_mode":"append","other":"{\"default\":\"us-central1\"}","key":%s}`,
+			channel.Id, keyJSON,
+		))
+
+		require.True(t, result.success, result.message)
+		stored := reloadChannelForUpdateTest(t, channel.Id)
+		assert.True(t, stored.ChannelInfo.IsMultiKey)
+		assert.Equal(t, 2, stored.ChannelInfo.MultiKeySize)
+		keys := stored.GetKeys()
+		require.Len(t, keys, 2)
+		assertVertexCredentialProject(t, keys[0], "proj-a")
+		assertVertexCredentialProject(t, keys[1], "proj-b")
+	})
+}
+
+func TestUpdateChannelVertexMultiToSingleRequiresOneCredential(t *testing.T) {
+	setupModelListControllerTestDB(t)
+
+	multiKeyInfo := model.ChannelInfo{
+		IsMultiKey:   true,
+		MultiKeySize: 2,
+		MultiKeyMode: constant.MultiKeyModeRandom,
+	}
+	storedKeys := `{"type":"service_account","project_id":"proj-a"}` + "\n" + `{"type":"service_account","project_id":"proj-b"}`
+
+	t.Run("rejects compact array of multiple credentials", func(t *testing.T) {
+		channel := insertVertexChannelForUpdateTest(t, "vertex-multi-to-single-array", storedKeys, multiKeyInfo)
+
+		arrayKey := `[{"type":"service_account","project_id":"proj-a"},{"type":"service_account","project_id":"proj-b"}]`
+		keyJSON, err := common.Marshal(arrayKey)
+		require.NoError(t, err)
+		result := performUpdateChannelRequest(t, common.RoleRootUser, fmt.Sprintf(
+			`{"id":%d,"is_multi_key":false,"other":"{\"default\":\"us-central1\"}","key":%s}`,
+			channel.Id, keyJSON,
+		))
+
+		require.False(t, result.success)
+		assert.Contains(t, result.message, "只能保留一个密钥")
+		stored := reloadChannelForUpdateTest(t, channel.Id)
+		assert.True(t, stored.ChannelInfo.IsMultiKey)
+	})
+
+	t.Run("accepts one pretty-printed credential", func(t *testing.T) {
+		channel := insertVertexChannelForUpdateTest(t, "vertex-multi-to-single-pretty", storedKeys, multiKeyInfo)
+
+		keyJSON, err := common.Marshal(prettyVertexCredential)
+		require.NoError(t, err)
+		result := performUpdateChannelRequest(t, common.RoleRootUser, fmt.Sprintf(
+			`{"id":%d,"is_multi_key":false,"other":"{\"default\":\"us-central1\"}","key":%s}`,
+			channel.Id, keyJSON,
+		))
+
+		require.True(t, result.success, result.message)
+		stored := reloadChannelForUpdateTest(t, channel.Id)
+		assert.False(t, stored.ChannelInfo.IsMultiKey)
+		assert.NotContains(t, stored.Key, "\n")
+		assertVertexCredentialProject(t, stored.Key, "proj-a")
+	})
 }

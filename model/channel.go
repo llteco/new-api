@@ -577,6 +577,18 @@ func (channel *Channel) Insert() error {
 }
 
 func (channel *Channel) Update() error {
+	return channel.update(false)
+}
+
+// UpdateWithChannelInfo behaves like Update but commits ChannelInfo in the same
+// transaction even when it is zero-valued (struct Updates skip zero fields).
+// Converting a multi-key channel to single-key relies on this so the retained
+// key and the cleared per-key metadata can never diverge.
+func (channel *Channel) UpdateWithChannelInfo() error {
+	return channel.update(true)
+}
+
+func (channel *Channel) update(withChannelInfo bool) error {
 	// If this is a multi-key channel, recalculate MultiKeySize based on the current key list to avoid inconsistency after editing keys
 	if channel.ChannelInfo.IsMultiKey {
 		var keyStr string
@@ -622,8 +634,15 @@ func (channel *Channel) Update() error {
 			}
 		}
 	}
-	var err error
-	err = DB.Model(channel).Updates(channel).Error
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(channel).Updates(channel).Error; err != nil {
+			return err
+		}
+		if withChannelInfo {
+			return tx.Model(channel).Update("channel_info", channel.ChannelInfo).Error
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}

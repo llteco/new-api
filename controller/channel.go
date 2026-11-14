@@ -594,7 +594,7 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 		case string:
 			keyStr = strings.TrimSpace(v)
 		default:
-			bytes, err := json.Marshal(v)
+			bytes, err := common.Marshal(v)
 			if err != nil {
 				return nil, fmt.Errorf("Vertex AI key JSON 编码失败: %w", err)
 			}
@@ -608,6 +608,53 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 		return nil, fmt.Errorf("批量添加 Vertex AI 的 keys 不能为空")
 	}
 	return cleanKeys, nil
+}
+
+// parseVertexCredentialKeys 将 Vertex AI 服务账号密钥解析为逐条紧凑 JSON 凭据。
+// 输入可以是 JSON 数组、单个（可能美化的）JSON 对象，或换行分隔的紧凑 JSON 对象。
+// 紧凑化保证存储后按换行拆分密钥（GetKeys）时不会破坏凭据边界。
+func parseVertexCredentialKeys(keys string) ([]string, error) {
+	trimmed := strings.TrimSpace(keys)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		return getVertexArrayKeys(trimmed)
+	}
+	compactCredential := func(raw json.RawMessage) (string, error) {
+		compact, err := common.Marshal(raw)
+		if err != nil {
+			return "", fmt.Errorf("Vertex AI key JSON 编码失败: %w", err)
+		}
+		return string(compact), nil
+	}
+	// 整个输入是单个 JSON 值（美化格式也允许）
+	var raw json.RawMessage
+	if err := common.Unmarshal([]byte(trimmed), &raw); err == nil {
+		credential, err := compactCredential(raw)
+		if err != nil {
+			return nil, err
+		}
+		return []string{credential}, nil
+	}
+	// 换行分隔的紧凑凭据（多 key 存储格式）
+	credentials := make([]string, 0)
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var item json.RawMessage
+		if err := common.Unmarshal([]byte(line), &item); err != nil {
+			return nil, fmt.Errorf("Vertex AI 密钥必须是 JSON 对象或标准的 JsonArray 格式: %w", err)
+		}
+		credential, err := compactCredential(item)
+		if err != nil {
+			return nil, err
+		}
+		credentials = append(credentials, credential)
+	}
+	return credentials, nil
 }
 
 func AddChannel(c *gin.Context) {
@@ -1004,6 +1051,17 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 
+	// Vertex 服务账号密钥以 JSON 对象为一条逻辑凭据；请求未携带 type/settings 时沿用原渠道配置。
+	channelType := channel.Type
+	if _, ok := requestData["type"]; !ok {
+		channelType = originChannel.Type
+	}
+	vertexOtherSettings := channel.GetOtherSettings()
+	if _, ok := requestData["settings"]; !ok {
+		vertexOtherSettings = originChannel.GetOtherSettings()
+	}
+	usesVertexJSONKeys := channelType == constant.ChannelTypeVertexAi && vertexOtherSettings.VertexKeyType != dto.VertexKeyTypeAPIKey
+
 	convertedToSingleKey := false
 	if channel.IsMultiKey != nil && *channel.IsMultiKey != originChannel.ChannelInfo.IsMultiKey {
 		if *channel.IsMultiKey {
@@ -1012,17 +1070,52 @@ func UpdateChannel(c *gin.Context) {
 				IsMultiKey:   true,
 				MultiKeyMode: constant.MultiKeyModeRandom,
 			}
-		} else {
-			// 多 key -> 单 key：只保留一个可用 key，并清空 per-key 状态。
-			if key := strings.TrimSpace(channel.Key); key != "" {
-				if strings.ContainsAny(key, "\r\n") {
+			if usesVertexJSONKeys {
+				// 紧凑化凭据，避免美化 JSON 在按换行拆分时被拆成无效密钥。
+				keyMaterial := channel.Key
+				if strings.TrimSpace(keyMaterial) == "" {
+					keyMaterial = originChannel.Key
+				}
+				credentials, err := parseVertexCredentialKeys(keyMaterial)
+				if err != nil {
 					c.JSON(http.StatusOK, gin.H{
 						"success": false,
-						"message": "转换为单密钥时只能保留一个密钥",
+						"message": err.Error(),
 					})
 					return
 				}
-				channel.Key = key
+				channel.Key = strings.Join(credentials, "\n")
+			}
+		} else {
+			// 多 key -> 单 key：只保留一个可用 key，并清空 per-key 状态。
+			if key := strings.TrimSpace(channel.Key); key != "" {
+				if usesVertexJSONKeys {
+					credentials, err := parseVertexCredentialKeys(key)
+					if err != nil {
+						c.JSON(http.StatusOK, gin.H{
+							"success": false,
+							"message": err.Error(),
+						})
+						return
+					}
+					if len(credentials) != 1 {
+						c.JSON(http.StatusOK, gin.H{
+							"success": false,
+							"message": "转换为单密钥时只能保留一个密钥",
+						})
+						return
+					}
+					channel.Key = credentials[0]
+				} else {
+					if strings.ContainsAny(key, "\r\n") {
+						c.JSON(http.StatusOK, gin.H{
+							"success": false,
+							"message": "转换为单密钥时只能保留一个密钥",
+						})
+						return
+					}
+					channel.Key = key
+				}
 			} else {
 				keys := originChannel.GetKeys()
 				if len(keys) == 0 {
@@ -1033,6 +1126,7 @@ func UpdateChannel(c *gin.Context) {
 					return
 				}
 				channel.Key = ""
+				now := common.GetTimestamp()
 				for idx, key := range keys {
 					status := common.ChannelStatusEnabled
 					if originChannel.ChannelInfo.MultiKeyStatusList != nil {
@@ -1040,7 +1134,9 @@ func UpdateChannel(c *gin.Context) {
 							status = s
 						}
 					}
-					if status == common.ChannelStatusEnabled {
+					// 与 model.isKeySelectable 保持一致：冷却已到期的临时禁用 key 仍可用。
+					if status == common.ChannelStatusEnabled ||
+						(status == common.ChannelStatusTempDisabled && now >= originChannel.ChannelInfo.MultiKeyCooldownUntil[idx]) {
 						channel.Key = key
 						break
 					}
@@ -1085,10 +1181,19 @@ func UpdateChannel(c *gin.Context) {
 				var existingKeys []string
 
 				// 解析现有密钥
-				if strings.HasPrefix(strings.TrimSpace(originChannel.Key), "[") {
+				if usesVertexJSONKeys {
+					existingKeys, err = parseVertexCredentialKeys(originChannel.Key)
+					if err != nil {
+						c.JSON(http.StatusOK, gin.H{
+							"success": false,
+							"message": "现有密钥解析失败: " + err.Error(),
+						})
+						return
+					}
+				} else if strings.HasPrefix(strings.TrimSpace(originChannel.Key), "[") {
 					// JSON数组格式
 					var arr []json.RawMessage
-					if err := json.Unmarshal([]byte(strings.TrimSpace(originChannel.Key)), &arr); err == nil {
+					if err := common.Unmarshal([]byte(strings.TrimSpace(originChannel.Key)), &arr); err == nil {
 						existingKeys = make([]string, len(arr))
 						for i, v := range arr {
 							existingKeys[i] = string(v)
@@ -1099,22 +1204,15 @@ func UpdateChannel(c *gin.Context) {
 					existingKeys = strings.Split(strings.Trim(originChannel.Key, "\n"), "\n")
 				}
 
-				// 处理 Vertex AI 的特殊情况
-				if channel.Type == constant.ChannelTypeVertexAi && channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
-					// 尝试解析新密钥为JSON数组
-					if strings.HasPrefix(strings.TrimSpace(channel.Key), "[") {
-						array, err := getVertexArrayKeys(channel.Key)
-						if err != nil {
-							c.JSON(http.StatusOK, gin.H{
-								"success": false,
-								"message": "追加密钥解析失败: " + err.Error(),
-							})
-							return
-						}
-						newKeys = array
-					} else {
-						// 单个JSON密钥
-						newKeys = []string{channel.Key}
+				// 处理 Vertex AI 的特殊情况：按逻辑凭据解析并紧凑化
+				if usesVertexJSONKeys {
+					newKeys, err = parseVertexCredentialKeys(channel.Key)
+					if err != nil {
+						c.JSON(http.StatusOK, gin.H{
+							"success": false,
+							"message": "追加密钥解析失败: " + err.Error(),
+						})
+						return
 					}
 				} else {
 					// 普通渠道的处理
@@ -1155,19 +1253,16 @@ func UpdateChannel(c *gin.Context) {
 			// 覆盖模式：直接使用新密钥（默认行为，不需要特殊处理）
 		}
 	}
-	err = channel.Update()
+	if convertedToSingleKey {
+		// 保留的 key 与清空的 ChannelInfo 必须同事务提交：结构体更新会跳过零值
+		// ChannelInfo，分两次写可能在第二次失败时留下已删 key 与旧多 key 元数据并存。
+		err = channel.UpdateWithChannelInfo()
+	} else {
+		err = channel.Update()
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
-	}
-	if convertedToSingleKey {
-		// channel.Update reloads the row, so reset the in-memory value before
-		// persisting: GORM's struct updates skip the zero-value ChannelInfo.
-		channel.ChannelInfo = model.ChannelInfo{}
-		if err := channel.SaveChannelInfo(); err != nil {
-			common.ApiError(c, err)
-			return
-		}
 	}
 	model.InitChannelCache()
 	if proxyChanged {
