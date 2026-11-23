@@ -487,6 +487,19 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
+// cancelOnCloseBody releases the per-attempt timeout context when the response
+// body is closed, keeping the context alive exactly as long as the request.
+type cancelOnCloseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnCloseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
+}
+
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
@@ -529,13 +542,52 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
+	// Bound a single channel attempt so a stuck upstream cannot delay failover
+	// indefinitely. Streaming requests bound only the wait for response headers
+	// (the stream body is governed by the streaming idle timeout); non-streaming
+	// requests bound the whole response, including the body read.
+	parentCtx := req.Context()
+	var attemptCtx context.Context
+	var attemptCancel context.CancelFunc
+	var headerTimer *time.Timer
+	if info.IsStream {
+		if timeout := common2.RelayStreamHeaderTimeout; timeout > 0 {
+			attemptCtx, attemptCancel = context.WithCancel(parentCtx)
+			headerTimer = time.AfterFunc(time.Duration(timeout)*time.Second, attemptCancel)
+		}
+	} else if timeout := common2.RelayNonStreamTimeout; timeout > 0 {
+		attemptCtx, attemptCancel = context.WithTimeout(parentCtx, time.Duration(timeout)*time.Second)
+	}
+	if attemptCtx != nil {
+		req = req.WithContext(attemptCtx)
+	}
+
 	resp, err := relayClient.Do(req)
+	if headerTimer != nil {
+		headerTimer.Stop()
+	}
 	if err != nil {
+		if attemptCtx != nil && attemptCtx.Err() != nil && parentCtx.Err() == nil {
+			reason, timeout := "upstream response header timeout", common2.RelayStreamHeaderTimeout
+			if !info.IsStream {
+				reason, timeout = "upstream response timeout", common2.RelayNonStreamTimeout
+			}
+			err = fmt.Errorf("%s after %ds: %w", reason, timeout, err)
+		}
+		if attemptCancel != nil {
+			attemptCancel()
+		}
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
 	if resp == nil {
+		if attemptCancel != nil {
+			attemptCancel()
+		}
 		return nil, errors.New("resp is nil")
+	}
+	if attemptCancel != nil {
+		resp.Body = &cancelOnCloseBody{ReadCloser: resp.Body, cancel: attemptCancel}
 	}
 	if common2.DebugEnabled {
 		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)

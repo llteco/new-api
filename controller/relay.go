@@ -216,6 +216,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		retryParam.MarkTried(channel.Id)
 		addUsedChannel(c, channel.Id)
+		attemptStart := time.Now()
 
 		if retryParam.GetRetry() > 0 {
 			// The first attempt reuses the context set up by the distributor;
@@ -226,7 +227,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				relayInfo.LastError = setupErr
 				// No key was acquired: the context still holds the previous
 				// channel's key, so do not attribute it to this channel.
-				processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), setupErr)
+				processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), setupErr, time.Since(attemptStart))
 				if !shouldRetry(c, setupErr) {
 					break
 				}
@@ -280,7 +281,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, time.Since(attemptStart))
 
 		if !shouldRetry(c, newAPIError) {
 			break
@@ -405,8 +406,12 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError) bool {
 	return operation_setting.ShouldRetryByStatusCode(code)
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
-	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, elapsed time.Duration) {
+	logMessage := fmt.Sprintf("channel error (channel #%d, status code: %d", channelError.ChannelId, err.StatusCode)
+	if elapsed >= time.Millisecond {
+		logMessage += fmt.Sprintf(", elapsed: %s", elapsed.Round(time.Millisecond))
+	}
+	logger.LogError(c, logMessage+fmt.Sprintf("): %s", common.LocalLogPreview(err.Error())))
 	// Try to detect a per-key limit/cooldown first.
 	// NOTE: do not gate on channelError.IsMultiKey — on the first relay attempt the
 	// channel object is a synthetic stub (getChannel returns one before InitChannelMeta
@@ -627,6 +632,7 @@ func RelayTask(c *gin.Context) {
 			}
 			retryParam.MarkTried(channel.Id)
 		}
+		attemptStart := time.Now()
 
 		if retryParam.GetRetry() > 0 {
 			if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
@@ -636,7 +642,7 @@ func RelayTask(c *gin.Context) {
 				}
 				// Setup failure (e.g. no available key) on a retry-selected
 				// channel also fails over, mirroring the main relay loop.
-				processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), setupErr)
+				processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), setupErr, time.Since(attemptStart))
 				taskErr = service.TaskErrorWrapper(setupErr.Err, string(setupErr.GetErrorCode()), setupErr.StatusCode)
 				if !shouldRetryTaskRelay(c, taskErr) {
 					if lastTaskErr != nil {
@@ -700,7 +706,7 @@ func RelayTask(c *gin.Context) {
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode), time.Since(attemptStart))
 		}
 
 		if !shouldRetryTaskRelay(c, taskErr) {

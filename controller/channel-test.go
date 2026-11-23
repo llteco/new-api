@@ -919,7 +919,7 @@ func processManualTestChannelError(channel *model.Channel, result testResult) {
 	processChannelError(result.context, *types.NewChannelError(
 		channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 		common.GetContextKeyString(result.context, constant.ContextKeyChannelKey),
-		channel.GetAutoBan()), result.newAPIError)
+		channel.GetAutoBan()), result.newAPIError, 0)
 }
 
 // channelTestSummary records the outcome of one channel test cycle so the
@@ -965,7 +965,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 	}
 
 	if allowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
-		processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, 0)
 		summary.Disabled++
 	}
 
