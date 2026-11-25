@@ -189,23 +189,53 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	retryParam := &service.RetryParam{
 		Ctx:         c,
-		TokenGroup:  relayInfo.TokenGroup,
+		TokenGroup:  common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
 		ModelName:   relayInfo.OriginModelName,
 		RequestPath: c.Request.URL.Path,
 		Retry:       common.GetPointer(0),
+		Failover:    true,
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	// Failover loop: on a retryable failure, automatically try the remaining
+	// channels serving this model until one succeeds or all have been attempted.
+	for {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
-			newAPIError = channelErr
+			// All channels exhausted: surface the last upstream error instead
+			// of the channel-selection failure.
+			if relayInfo.LastError != nil {
+				newAPIError = relayInfo.LastError
+			} else {
+				newAPIError = channelErr
+			}
 			break
 		}
+		retryParam.MarkTried(channel.Id)
 		addUsedChannel(c, channel.Id)
+		attemptStart := time.Now()
+
+		if retryParam.GetRetry() > 0 {
+			// The first attempt reuses the context set up by the distributor;
+			// retries must set up the newly selected channel. A setup failure
+			// (e.g. no available key) also fails over to the next channel.
+			if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
+				newAPIError = setupErr
+				relayInfo.LastError = setupErr
+				// No key was acquired: the context still holds the previous
+				// channel's key, so do not attribute it to this channel.
+				processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), setupErr, time.Since(attemptStart))
+				if !shouldRetry(c, setupErr) {
+					break
+				}
+				retryParam.IncreaseRetry()
+				continue
+			}
+		}
+
 		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
 			newAPIError = billingErr
 			break
@@ -251,11 +281,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
 
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, time.Since(attemptStart))
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		if !shouldRetry(c, newAPIError) {
 			break
 		}
+		retryParam.IncreaseRetry()
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -313,7 +344,8 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
-	if info.ChannelMeta == nil {
+	if retryParam.GetRetry() == 0 {
+		// First attempt: reuse the channel selected by the distributor middleware.
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
 		if !autoBan {
@@ -335,31 +367,30 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	}
 
 	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
-
-	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
-	if newAPIError != nil {
-		return nil, newAPIError
-	}
 	return channel, nil
 }
 
-func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
+func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError) bool {
 	if openaiErr == nil {
 		return false
 	}
+	// Never retry once bytes have been written to the client. Note: realtime
+	// connections are hijacked websockets, so this guard does not cover them;
+	// the realtime handler only returns errors before the session starts.
+	if c.Writer.Written() {
+		return false
+	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+		return false
+	}
+	// A pinned channel must never fail over, even on channel-level errors.
+	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
 	if types.IsChannelError(openaiErr) {
 		return true
 	}
 	if types.IsSkipRetryError(openaiErr) {
-		return false
-	}
-	if retryTimes <= 0 {
-		return false
-	}
-	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
 	code := openaiErr.StatusCode
@@ -375,8 +406,12 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	return operation_setting.ShouldRetryByStatusCode(code)
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
-	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, elapsed time.Duration) {
+	logMessage := fmt.Sprintf("channel error (channel #%d, status code: %d", channelError.ChannelId, err.StatusCode)
+	if elapsed >= time.Millisecond {
+		logMessage += fmt.Sprintf(", elapsed: %s", elapsed.Round(time.Millisecond))
+	}
+	logger.LogError(c, logMessage+fmt.Sprintf("): %s", common.LocalLogPreview(err.Error())))
 	// Try to detect a per-key limit/cooldown first.
 	// NOTE: do not gate on channelError.IsMultiKey — on the first relay attempt the
 	// channel object is a synthetic stub (getChannel returns one before InitChannelMeta
@@ -567,31 +602,86 @@ func RelayTask(c *gin.Context) {
 
 	retryParam := &service.RetryParam{
 		Ctx:         c,
-		TokenGroup:  relayInfo.TokenGroup,
+		TokenGroup:  common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
 		ModelName:   relayInfo.OriginModelName,
 		RequestPath: c.Request.URL.Path,
 		Retry:       common.GetPointer(0),
+		Failover:    true,
 	}
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	var lastTaskErr *taskdto.TaskError
+	triedLockedKeys := make(map[string]bool)
+	for {
 		var channel *model.Channel
+		var locked bool
 
 		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
-			channel = lockedCh
-			if retryParam.GetRetry() > 0 {
-				if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
-					taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
-					break
-				}
-			}
+			channel, locked = lockedCh, true
 		} else {
 			var channelErr *types.NewAPIError
 			channel, channelErr = getChannel(c, relayInfo, retryParam)
 			if channelErr != nil {
 				logger.LogError(c, channelErr.Error())
-				taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", http.StatusInternalServerError)
+				// All channels exhausted: surface the last upstream error.
+				if lastTaskErr != nil {
+					taskErr = lastTaskErr
+				} else {
+					taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", http.StatusInternalServerError)
+				}
 				break
 			}
+			retryParam.MarkTried(channel.Id)
+		}
+		attemptStart := time.Now()
+
+		if retryParam.GetRetry() > 0 {
+			if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
+				if locked {
+					taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
+					break
+				}
+				// Setup failure (e.g. no available key) on a retry-selected
+				// channel also fails over, mirroring the main relay loop.
+				processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), setupErr, time.Since(attemptStart))
+				taskErr = service.TaskErrorWrapper(setupErr.Err, string(setupErr.GetErrorCode()), setupErr.StatusCode)
+				if !shouldRetryTaskRelay(c, taskErr) {
+					if lastTaskErr != nil {
+						taskErr = lastTaskErr
+					}
+					break
+				}
+				retryParam.IncreaseRetry()
+				continue
+			}
+		}
+		if locked {
+			// Locked channel (remix/continuation): no cross-channel failover;
+			// retry only while an untried key is available on the same channel.
+			// Polling mode advances the key index; random mode may re-roll a
+			// tried key, so re-select a bounded number of times before giving up.
+			var setupErr *types.NewAPIError
+			rolls := len(channel.GetKeys())
+			for triedLockedKeys[common.GetContextKeyString(c, constant.ContextKeyChannelKey)] {
+				if rolls <= 0 {
+					break
+				}
+				rolls--
+				if setupErr = middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
+					break
+				}
+			}
+			if setupErr != nil {
+				taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
+				break
+			}
+			usingKey := common.GetContextKeyString(c, constant.ContextKeyChannelKey)
+			if triedLockedKeys[usingKey] {
+				if lastTaskErr != nil {
+					taskErr = lastTaskErr
+				}
+				break
+			}
+			triedLockedKeys[usingKey] = true
 		}
 
 		addUsedChannel(c, channel.Id)
@@ -612,15 +702,17 @@ func RelayTask(c *gin.Context) {
 		}
 
 		if !taskErr.LocalError {
+			lastTaskErr = taskErr
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode), time.Since(attemptStart))
 		}
 
-		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+		if !shouldRetryTaskRelay(c, taskErr) {
 			break
 		}
+		retryParam.IncreaseRetry()
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -684,17 +776,23 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 	c.JSON(taskErr.StatusCode, taskErr)
 }
 
-func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskError, retryTimes int) bool {
+func shouldRetryTaskRelay(c *gin.Context, taskErr *taskdto.TaskError) bool {
 	if taskErr == nil {
+		return false
+	}
+	// Never retry once bytes have been written to the client.
+	if c.Writer.Written() {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
-	if retryTimes <= 0 {
+	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
-	if _, ok := c.Get("specific_channel_id"); ok {
+	// Local errors (validation, billing, conversion) are not channel failures
+	// and must never fail over, whatever their status code.
+	if taskErr.LocalError {
 		return false
 	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
@@ -715,9 +813,6 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskEr
 	}
 	if taskErr.StatusCode == 408 {
 		// azure处理超时不重试
-		return false
-	}
-	if taskErr.LocalError {
 		return false
 	}
 	if taskErr.StatusCode/100 == 2 {

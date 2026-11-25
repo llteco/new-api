@@ -161,6 +161,11 @@ var BatchUpdateInterval int
 
 var RelayTimeout int // unit is second
 
+// Per-attempt upstream timeouts bound a single channel attempt so a stuck
+// upstream cannot delay failover indefinitely. 0 disables the bound.
+var RelayStreamHeaderTimeout int // unit is second: max wait for response headers on streaming requests
+var RelayNonStreamTimeout int    // unit is second: total time for non-streaming requests
+
 var RelayIdleConnTimeout int // unit is second
 var RelayMaxIdleConns int
 var RelayMaxIdleConnsPerHost int
